@@ -11,6 +11,7 @@ dist/
 *.egg
 
 # Virtual environments
+.ytd_env/
 .venv/
 venv/
 env/

@@ -8,6 +8,7 @@ The downloader uses:
 - `yt-dlp` to read YouTube video information and download media.
 - `imageio-ffmpeg` to provide FFmpeg for merging video and audio into one file.
 - Python's `argparse` module to handle command line options.
+- A local `.ytd_env` dependency folder when required packages are not already installed.
 
 ## Features
 
@@ -21,6 +22,7 @@ The downloader uses:
 - Show download progress with percentage, speed, and ETA when available.
 - Print a final summary with link, video title, quality, saved file, and directory.
 - Save videos in the directory where the command prompt is open by default.
+- Prepare required Python dependencies automatically on first download.
 
 ## Project Files
 
@@ -31,16 +33,17 @@ video_downloader/
   pyproject.toml      Package configuration and ytd command registration
   requirements.txt    Python dependencies
   .gitignore          Files and folders Git should ignore
+  .ytd_env/           Auto-created local dependency folder, ignored by Git
   README.md           Project documentation
 ```
 
 ## Requirements
 
-Install these before using the project:
+Install this before using the project:
 
 - Python 3.8 or newer
-- Internet connection
-- Windows PowerShell or Command Prompt
+
+An internet connection is required the first time dependencies need to be downloaded.
 
 During Python installation on Windows, enable:
 
@@ -54,7 +57,7 @@ Check Python:
 python --version
 ```
 
-## Installation
+## Fast Start
 
 Open PowerShell or Command Prompt in the project folder:
 
@@ -62,17 +65,33 @@ Open PowerShell or Command Prompt in the project folder:
 cd path\to\video_downloader
 ```
 
-Install the project in editable mode:
+Run the downloader:
+
+```powershell
+.\ytd
+```
+
+On first use, the launcher sets temporary environment variables for this one process and the Python script checks whether the required packages are available.
+
+If `yt-dlp` or `imageio-ffmpeg` is missing, the script installs the missing package into:
+
+```text
+.ytd_env\site-packages
+```
+
+This keeps dependencies inside the project folder. It does not permanently change the user's system environment.
+
+When `ytd` exits, the launcher cleans the temporary environment variables automatically.
+
+The user only needs Python installed.
+
+## Optional Global Command Install
+
+If you want to run `ytd` from any directory without typing `.\ytd`, install the command in editable mode:
 
 ```powershell
 python -m pip install -e .
 ```
-
-This installs:
-
-- The `ytd` command.
-- `yt-dlp`.
-- `imageio-ffmpeg`.
 
 Editable mode means changes made to `ytd.py` are used immediately without reinstalling.
 
@@ -88,13 +107,17 @@ If you only use `requirements.txt`, run the tool from the project folder with:
 .\ytd
 ```
 
+This optional install is not required for the local launcher.
+
 ## Basic Usage
 
 Interactive mode:
 
 ```powershell
-ytd
+.\ytd
 ```
+
+If you installed the global command with `python -m pip install -e .`, you can use `ytd` instead.
 
 The CLI shows:
 
@@ -297,6 +320,31 @@ To save somewhere else, use `--output`:
 ```powershell
 ytd youtube.com/watch?v=VIDEO_ID 720 --output "D:\MyDownloads"
 ```
+
+## Runtime Environment
+
+The Windows launcher `ytd.bat` uses `setlocal`, which means environment changes exist only while the command is running.
+
+It sets these temporary values:
+
+```text
+YTD_PROJECT_DIR
+YTD_DEPS_DIR
+PYTHONUTF8
+PYTHONIOENCODING
+PYTHONPATH
+```
+
+Purpose:
+
+- `YTD_PROJECT_DIR` points to the project folder.
+- `YTD_DEPS_DIR` points to `.ytd_env\site-packages`.
+- `PYTHONUTF8` and `PYTHONIOENCODING` improve terminal text handling.
+- `PYTHONPATH` lets Python import packages installed in `.ytd_env`.
+
+When the command exits, `endlocal` removes these temporary environment changes.
+
+No permanent system environment variable is created.
 
 ## Exit Commands
 
@@ -553,13 +601,15 @@ To share with another person:
 5. They run:
 
 ```powershell
-python -m pip install -e .
+.\ytd
 ```
 
-Then they can use:
+The first download prepares dependencies automatically inside `.ytd_env` if they are missing.
+
+If they want a global `ytd` command, they can optionally run:
 
 ```powershell
-ytd
+python -m pip install -e .
 ```
 
 ## Git Ignore File
@@ -598,13 +648,16 @@ dist/
 These are package/build outputs. For this project, `ytd_downloader_cli.egg-info/` is created after running `python -m pip install -e .`.
 
 ```text
+.ytd_env/
 .venv/
 venv/
 env/
 ENV/
 ```
 
-These are virtual environment folders. They can be very large and are specific to one computer.
+These are local dependency or virtual environment folders. They can be very large and are specific to one computer.
+
+For this project, `.ytd_env/` is auto-created when the app installs missing dependencies locally.
 
 ```text
 .pytest_cache/
@@ -667,6 +720,7 @@ If you are sharing by zip file instead of Git, remove or skip these folders befo
 ```text
 __pycache__/
 ytd_downloader_cli.egg-info/
+.ytd_env/
 downloads/
 .venv/
 venv/
@@ -690,27 +744,33 @@ Add Python to PATH
 
 ### `ytd` is not recognized
 
-Run this again inside the project folder:
-
-```powershell
-python -m pip install -e .
-```
-
-Or run from the project folder with:
+From PowerShell, run the local launcher with:
 
 ```powershell
 .\ytd
 ```
 
-### Video and audio do not merge
+From Command Prompt, this works from the project folder:
 
-Reinstall dependencies:
+```cmd
+ytd
+```
+
+To make `ytd` work globally, run this inside the project folder:
 
 ```powershell
 python -m pip install -e .
 ```
 
-This installs `imageio-ffmpeg`, which provides FFmpeg.
+### Video and audio do not merge
+
+Run the local launcher once so it can prepare dependencies:
+
+```powershell
+.\ytd
+```
+
+This prepares `imageio-ffmpeg`, which provides FFmpeg.
 
 ### YouTube download fails
 
