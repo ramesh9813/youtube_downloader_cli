@@ -15,6 +15,7 @@ The downloader uses:
 - Paste a YouTube link interactively.
 - Choose a video quality from a numbered list.
 - Download directly with a link and quality, for example `ytd youtube.com/watch?v=VIDEO_ID 720`.
+- Download many videos from a text file with `ytd @filename`.
 - Type `e`, `exit`, `q`, or `quit` to close the CLI.
 - Continue downloading more videos in one CLI session.
 - Show download progress with percentage, speed, and ETA when available.
@@ -101,8 +102,18 @@ The CLI shows:
 Saving videos to: current_directory
 Type e to exit.
 
-Enter YouTube link, or e to exit:
+Enter url, file, or e to exit:
 ```
+
+The first prompt accepts:
+
+```text
+url
+file
+e
+```
+
+Use `url` to download one video. Use `file` to choose a text file containing many YouTube links. Use `e` to exit.
 
 Paste a YouTube link:
 
@@ -128,6 +139,92 @@ Enter a number such as:
 
 After the download finishes, the CLI asks for another link. Type `e` to exit.
 
+## Batch File Usage
+
+Create a text file in the same directory where your command prompt is open.
+
+Example file name:
+
+```text
+links.txt
+```
+
+Example file content:
+
+```text
+https://www.youtube.com/watch?v=VIDEO_ID_1
+youtube.com/watch?v=VIDEO_ID_2
+https://youtu.be/VIDEO_ID_3
+```
+
+Blank lines are ignored. Lines starting with `#` are ignored.
+
+Run batch mode directly in PowerShell or Command Prompt:
+
+```powershell
+ytd --file links.txt
+```
+
+This direct form also works:
+
+```powershell
+ytd file links.txt
+```
+
+In Command Prompt, this form works too:
+
+```powershell
+ytd @links.txt
+```
+
+In PowerShell, use quotes if you want the `@filename` form:
+
+```powershell
+ytd '@links.txt'
+```
+
+PowerShell treats bare `@` as special syntax, so `ytd --file links.txt` is the safest command on Windows.
+
+These commands download each video at `720p` by default and save the files in the current command prompt directory.
+
+You can also list files in the current directory and select one. Start the CLI:
+
+```powershell
+ytd
+```
+
+Then enter:
+
+```text
+Enter url, file, or e to exit: file
+```
+
+The CLI lists files in the current directory:
+
+```text
+Files in D:\Videos:
+1. links.txt
+2. my_playlist.txt
+Choose file number, enter filename, or e to exit:
+```
+
+Enter the file number, for example:
+
+```text
+1
+```
+
+The downloader processes videos one by one. If one link fails, it prints the error, skips that link, and continues with the next link.
+
+After all links are processed, the CLI prints a batch summary table:
+
+```text
+Batch Summary
+# | Status     | Quality | Video / Link | Saved File / Message
+1 | downloaded | 720p    | Video title  | D:\Videos\Video title [id].mp4
+2 | failed     | 720p    | bad line     | Line 2: Invalid YouTube link format.
+```
+
 ## Direct Command Usage
 
 Download with full options:
@@ -146,6 +243,24 @@ Without `https://`:
 
 ```powershell
 ytd youtube.com/watch?v=VIDEO_ID 720
+```
+
+Download many videos from a text file:
+
+```powershell
+ytd --file links.txt
+```
+
+Command Prompt also supports:
+
+```powershell
+ytd @links.txt
+```
+
+PowerShell supports the `@filename` form when quoted:
+
+```powershell
+ytd '@links.txt'
 ```
 
 The script automatically changes this:
@@ -204,16 +319,19 @@ These work when the CLI asks for:
 The program flow is:
 
 1. Parse command line arguments.
-2. Normalize the YouTube link.
-3. Fetch video metadata using `yt-dlp`.
-4. Read available video formats from the metadata.
-5. Group available formats by video height, such as 1080p, 720p, and 480p.
-6. Ask the user to select a quality, unless quality was already provided.
-7. Select the best video and audio streams for the requested quality.
-8. Download the media.
-9. Use FFmpeg to merge video and audio into an MP4 file when separate streams are used.
-10. Print the download summary.
-11. Ask for another link until the user exits.
+2. Ask whether the user wants `url`, `file`, or `e`.
+3. For single video mode, normalize the YouTube link.
+4. For file mode, read YouTube links from the selected text file.
+5. Fetch video metadata using `yt-dlp`.
+6. Read available video formats from the metadata.
+7. Group available formats by video height, such as 1080p, 720p, and 480p.
+8. Ask the user to select a quality for single video mode, unless quality was already provided.
+9. Use `720p` automatically for batch file mode.
+10. Select the best video and audio streams for the requested quality.
+11. Download the media.
+12. Use FFmpeg to merge video and audio into an MP4 file when separate streams are used.
+13. Print the download summary.
+14. Ask for another action until the user exits.
 
 ## Code Methodology
 
@@ -233,6 +351,14 @@ It also supports short input:
 ytd URL 720
 ```
 
+It also supports batch file input:
+
+```powershell
+ytd --file links.txt
+ytd file links.txt
+ytd @links.txt
+```
+
 The parser also accepts accidental input like:
 
 ```powershell
@@ -240,6 +366,22 @@ ytd ---link-- URL --720--
 ```
 
 The script cleans those values before passing them to `argparse`.
+
+### Batch File Detection
+
+The script treats input starting with `@` as a batch file request.
+
+Examples:
+
+```powershell
+ytd --file links.txt
+ytd file links.txt
+ytd @links.txt
+```
+
+`--file links.txt`, `file links.txt`, and `@links.txt` mean read links from `links.txt`.
+
+In interactive mode, entering `file` or `@` means show the files in the current directory and ask the user to choose one.
 
 ### Link Normalization
 
@@ -314,6 +456,21 @@ Example:
 Deep Sea Robots - Unveiling The Ocean's Deepest Mysteries [s5WrmvC8oZ8].mp4
 ```
 
+### Batch Download Method
+
+The `download_batch()` function handles text-file downloads.
+
+It reads the selected file line by line:
+
+- Empty lines are skipped.
+- Lines starting with `#` are skipped.
+- Valid YouTube links are normalized.
+- Invalid lines are added to the final table as failed rows.
+
+Each valid link is downloaded separately at `720p` by default. If one download fails, the error is saved in the result table and the next link starts.
+
+This keeps long batch downloads running even when one link is unavailable, private, removed, or typed incorrectly.
+
 ### FFmpeg Handling
 
 The script first checks whether system FFmpeg exists:
@@ -354,8 +511,8 @@ The `main()` function runs a loop.
 
 After each successful download:
 
-1. It clears the current link and quality.
-2. It asks for another YouTube link.
+1. It clears the current link, file, and quality.
+2. It asks for `url`, `file`, or `e`.
 3. It exits only when the user types `e`, `exit`, `q`, or `quit`.
 
 ## Example Session
@@ -364,6 +521,7 @@ After each successful download:
 Saving videos to: F:\Videos
 Type e to exit.
 
+Enter url, file, or e to exit: url
 Enter YouTube link, or e to exit: youtube.com/watch?v=s5WrmvC8oZ8
 Available qualities:
 1. 1080p (webm)
@@ -380,7 +538,7 @@ Quality: 720p
 Saved file: F:\Videos\Deep Sea Robots... [s5WrmvC8oZ8].mp4
 Downloaded directory: F:\Videos
 
-Enter YouTube link, or e to exit: e
+Enter url, file, or e to exit: e
 Exited.
 ```
 
@@ -567,4 +725,3 @@ YouTube changes often, so keeping `yt-dlp` updated is important.
 ## Important Note
 
 Use this tool only for videos you have the right to download. Respect YouTube's terms, copyright rules, and the rights of content owners.
-"# youtube_downloader_cli" 

@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 EXIT_COMMANDS = {"e", "exit", "q", "quit"}
+BATCH_QUALITY = 720
 
 
 def import_yt_dlp():
@@ -72,6 +73,21 @@ def is_exit_command(value):
     return value.strip().lower() in EXIT_COMMANDS
 
 
+def read_input(prompt):
+    try:
+        return input(prompt).strip()
+    except EOFError:
+        return "e"
+
+
+def is_batch_reference(value):
+    return value.strip().startswith("@")
+
+
+def normalize_batch_filename(value):
+    return value.strip()[1:].strip().strip('"').strip("'")
+
+
 def parse_args(argv):
     cleaned = []
     for arg in argv:
@@ -91,11 +107,27 @@ def parse_args(argv):
     parser.add_argument("positional", nargs="*", help="Optional URL and quality, for example: ytd URL 720")
     parser.add_argument("--link", "-l", nargs="?", help="YouTube video link")
     parser.add_argument("--quality", "-q", help="Preferred video quality, for example: 720")
+    parser.add_argument("--file", "-f", dest="batch_file", help="Text file containing YouTube links")
     parser.add_argument("--output", "-o", default=".", help="Download directory")
     args = parser.parse_args(cleaned)
 
-    for item in args.positional:
-        if is_probable_url(item):
+    skip_next = False
+    for index, item in enumerate(args.positional):
+        if skip_next:
+            skip_next = False
+            continue
+
+        lowered = item.lower()
+        next_item = args.positional[index + 1] if index + 1 < len(args.positional) else ""
+        if lowered in {"file", "f"}:
+            args.batch_file = normalize_batch_filename(next_item) if is_batch_reference(next_item) else next_item
+            skip_next = bool(next_item)
+        elif lowered in {"url", "u"} and next_item:
+            args.link = args.link or normalize_link(next_item)
+            skip_next = True
+        if is_batch_reference(item):
+            args.batch_file = normalize_batch_filename(item)
+        elif is_probable_url(item):
             args.link = args.link or normalize_link(item)
         elif normalize_quality(item):
             args.quality = args.quality or str(normalize_quality(item))
@@ -150,7 +182,7 @@ def choose_quality(qualities):
         print(f"{index}. {item['height']}p ({extensions})")
 
     while True:
-        selected = input("Choose quality number, or e to exit: ").strip()
+        selected = read_input("Choose quality number, or e to exit: ")
         if is_exit_command(selected):
             return None
         if selected.isdigit():
@@ -246,10 +278,17 @@ def download_video(link, quality, output_dir):
         return result, final_path
 
 
-def download_one(link, requested_quality, output_dir):
+def download_one_result(link, requested_quality, output_dir, allow_quality_prompt=True, show_summary=True):
     if not link:
         print("No link provided.")
-        return True
+        return {
+            "status": "failed",
+            "link": link,
+            "quality": "",
+            "title": "",
+            "saved_path": "",
+            "message": "No link provided.",
+        }
 
     try:
         info = fetch_info(link)
@@ -257,31 +296,227 @@ def download_one(link, requested_quality, output_dir):
         selected_quality = best_quality_at_or_below(qualities, requested_quality)
 
         if not selected_quality:
+            if not allow_quality_prompt:
+                raise RuntimeError("No downloadable video quality was found.")
             selected_quality = choose_quality(qualities)
             if selected_quality is None:
-                return False
+                return {
+                    "status": "cancelled",
+                    "link": link,
+                    "quality": "",
+                    "title": "",
+                    "saved_path": "",
+                    "message": "Cancelled.",
+                }
         elif requested_quality and selected_quality != requested_quality:
             print(f"Requested {requested_quality}p is not available. Using {selected_quality}p instead.")
 
         result, saved_path = download_video(link, selected_quality, output_dir)
+        title = result.get("title", "Unknown title")
 
-        print("\nSummary")
-        print(f"Link: {link}")
-        print(f"Video name: {result.get('title', 'Unknown title')}")
-        print(f"Quality: {selected_quality}p")
-        print(f"Saved file: {saved_path}")
-        print(f"Downloaded directory: {saved_path.parent}")
-        return True
+        if show_summary:
+            print("\nSummary")
+            print(f"Link: {link}")
+            print(f"Video name: {title}")
+            print(f"Quality: {selected_quality}p")
+            print(f"Saved file: {saved_path}")
+            print(f"Downloaded directory: {saved_path.parent}")
+
+        return {
+            "status": "downloaded",
+            "link": link,
+            "quality": f"{selected_quality}p",
+            "title": title,
+            "saved_path": str(saved_path),
+            "message": "Downloaded.",
+        }
     except KeyboardInterrupt:
         print("\nCancelled.")
-        return False
+        return {
+            "status": "cancelled",
+            "link": link,
+            "quality": "",
+            "title": "",
+            "saved_path": "",
+            "message": "Cancelled.",
+        }
     except Exception as exc:
         print(f"\nError: {exc}")
+        return {
+            "status": "failed",
+            "link": link,
+            "quality": f"{requested_quality}p" if requested_quality else "",
+            "title": "",
+            "saved_path": "",
+            "message": str(exc),
+        }
+
+
+def list_files_for_selection(directory):
+    return sorted([path for path in Path(directory).iterdir() if path.is_file()], key=lambda path: path.name.lower())
+
+
+def choose_file(directory):
+    files = list_files_for_selection(directory)
+    if not files:
+        print(f"No files found in: {Path(directory).resolve()}")
+        return None
+
+    print(f"\nFiles in {Path(directory).resolve()}:")
+    for index, path in enumerate(files, start=1):
+        print(f"{index}. {path.name}")
+
+    while True:
+        selected = read_input("Choose file number, enter filename, or e to exit: ")
+        if is_exit_command(selected):
+            return None
+        if selected.isdigit():
+            index = int(selected)
+            if 1 <= index <= len(files):
+                return files[index - 1]
+
+        selected_name = normalize_batch_filename(selected) if is_batch_reference(selected) else selected
+        selected_path = Path(directory) / selected_name
+        if selected_path.is_file():
+            return selected_path
+        print("Enter a valid file number or filename.")
+
+
+def resolve_batch_file(batch_file, directory):
+    if batch_file is None:
+        return None
+    if batch_file == "":
+        return choose_file(directory)
+
+    path = Path(batch_file)
+    if not path.is_absolute():
+        path = Path(directory) / path
+    if not path.is_file():
+        print(f"File not found: {path}")
+        return None
+    return path
+
+
+def read_links_from_file(path):
+    links = []
+    with Path(path).open("r", encoding="utf-8-sig") as file:
+        for line_number, line in enumerate(file, start=1):
+            value = line.strip()
+            if not value or value.startswith("#"):
+                continue
+            if is_probable_url(value):
+                links.append({"line": line_number, "link": normalize_link(value), "error": ""})
+            else:
+                links.append({"line": line_number, "link": value, "error": "Invalid YouTube link format."})
+    return links
+
+
+def short_text(value, limit):
+    text = str(value or "")
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)] + "..."
+
+
+def print_batch_table(results):
+    rows = []
+    for index, result in enumerate(results, start=1):
+        details = result.get("saved_path") or result.get("message") or ""
+        rows.append(
+            [
+                str(index),
+                result.get("status", ""),
+                result.get("quality", ""),
+                short_text(result.get("title") or result.get("link"), 40),
+                short_text(details, 60),
+            ]
+        )
+
+    headers = ["#", "Status", "Quality", "Video / Link", "Saved File / Message"]
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for index, value in enumerate(row):
+            widths[index] = max(widths[index], len(value))
+
+    separator = "+".join("-" * (width + 2) for width in widths)
+    print("\nBatch Summary")
+    print(separator)
+    print(" | ".join(header.ljust(widths[index]) for index, header in enumerate(headers)))
+    print(separator)
+    for row in rows:
+        print(" | ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
+    print(separator)
+
+    downloaded = sum(1 for result in results if result.get("status") == "downloaded")
+    failed = sum(1 for result in results if result.get("status") == "failed")
+    print(f"Downloaded: {downloaded} | Failed: {failed} | Total: {len(results)}")
+
+
+def download_batch(batch_file, output_dir, quality=BATCH_QUALITY):
+    batch_path = resolve_batch_file(batch_file, Path.cwd())
+    if batch_path is None:
         return True
+
+    links = read_links_from_file(batch_path)
+    if not links:
+        print(f"No links found in: {batch_path}")
+        return True
+
+    print(f"\nBatch file: {batch_path}")
+    print(f"Downloading {len(links)} item(s) at {quality}p.")
+
+    results = []
+    for index, item in enumerate(links, start=1):
+        link = item["link"]
+        print(f"\n[{index}/{len(links)}] {link}")
+        if item["error"]:
+            print(f"Skipped: {item['error']}")
+            results.append(
+                {
+                    "status": "failed",
+                    "link": link,
+                    "quality": f"{quality}p",
+                    "title": "",
+                    "saved_path": "",
+                    "message": f"Line {item['line']}: {item['error']}",
+                }
+            )
+            continue
+
+        result = download_one_result(
+            link,
+            quality,
+            output_dir,
+            allow_quality_prompt=False,
+            show_summary=False,
+        )
+        if result["status"] == "cancelled":
+            results.append(result)
+            break
+        results.append(result)
+
+    print_batch_table(results)
+    return True
+
+
+def prompt_for_action():
+    value = read_input("\nEnter url, file, or e to exit: ")
+    if is_exit_command(value):
+        return "exit", None
+    if value.lower() in {"url", "u"}:
+        return "url", None
+    if value.lower() in {"file", "f"}:
+        return "file", ""
+    if is_batch_reference(value):
+        return "file", normalize_batch_filename(value)
+    if is_probable_url(value):
+        return "url", normalize_link(value)
+    print("Enter url for one video, file for a text file list, or e to exit.")
+    return None, None
 
 
 def prompt_for_link():
-    value = input("\nEnter YouTube link, or e to exit: ").strip()
+    value = read_input("Enter YouTube link, or e to exit: ")
     if is_exit_command(value):
         return None
     return normalize_link(value)
@@ -291,20 +526,38 @@ def main(argv=None):
     args = parse_args(argv if argv is not None else sys.argv[1:])
     link = args.link
     requested_quality = args.quality
+    batch_file = args.batch_file
 
     print(f"Saving videos to: {Path(args.output).resolve()}")
     print("Type e to exit.")
 
     while True:
+        if batch_file is not None:
+            download_batch(batch_file, args.output, requested_quality or BATCH_QUALITY)
+            batch_file = None
+            link = None
+            requested_quality = None
+            continue
+
         if not link:
-            link = prompt_for_link()
+            action, value = prompt_for_action()
+            if action is None:
+                continue
+            if action == "exit":
+                print("Exited.")
+                return 0
+            if action == "file":
+                batch_file = value
+                continue
+
+            link = value or prompt_for_link()
             requested_quality = None
             if link is None:
                 print("Exited.")
                 return 0
 
-        keep_running = download_one(link, requested_quality, args.output)
-        if not keep_running:
+        result = download_one_result(link, requested_quality, args.output)
+        if result["status"] == "cancelled":
             return 0
 
         link = None
