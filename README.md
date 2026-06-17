@@ -122,10 +122,7 @@ If you installed the global command with `python -m pip install -e .`, you can u
 The CLI shows:
 
 ```text
-Saving videos to: current_directory
-Type e to exit.
-
-Enter url, file, or e to exit:
+Enter url, file, e for exit:
 ```
 
 The first prompt accepts:
@@ -219,7 +216,7 @@ ytd
 Then enter:
 
 ```text
-Enter url, file, or e to exit: file
+Enter url, file, e for exit: file
 ```
 
 The CLI lists files in the current directory:
@@ -566,10 +563,7 @@ After each successful download:
 ## Example Session
 
 ```text
-Saving videos to: F:\Videos
-Type e to exit.
-
-Enter url, file, or e to exit: url
+Enter url, file, e for exit: url
 Enter YouTube link, or e to exit: youtube.com/watch?v=s5WrmvC8oZ8
 Available qualities:
 1. 1080p (webm)
@@ -584,9 +578,9 @@ Link: https://youtube.com/watch?v=s5WrmvC8oZ8
 Video name: Deep Sea Robots: Unveiling The Ocean's Deepest Mysteries
 Quality: 720p
 Saved file: F:\Videos\Deep Sea Robots... [s5WrmvC8oZ8].mp4
-Downloaded directory: F:\Videos
+Your video downloaded at this: F:\Videos
 
-Enter url, file, or e to exit: e
+Enter url, file, e for exit: e
 Exited.
 ```
 

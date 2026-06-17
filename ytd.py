@@ -384,7 +384,7 @@ def download_one_result(link, requested_quality, output_dir, allow_quality_promp
             print(f"Video name: {title}")
             print(f"Quality: {selected_quality}p")
             print(f"Saved file: {saved_path}")
-            print(f"Downloaded directory: {saved_path.parent}")
+            print(f"Your video downloaded at this: {saved_path.parent}")
 
         return {
             "status": "downloaded",
@@ -564,7 +564,7 @@ def download_batch(batch_file, output_dir, quality=BATCH_QUALITY):
 
 
 def prompt_for_action():
-    value = read_input("\nEnter url, file, or e to exit: ")
+    value = read_input("Enter url, file, e for exit: ")
     if is_exit_command(value):
         return "exit", None
     if value.lower() in {"url", "u"}:
@@ -591,9 +591,6 @@ def main(argv=None):
     link = args.link
     requested_quality = args.quality
     batch_file = args.batch_file
-
-    print(f"Saving videos to: {Path(args.output).resolve()}")
-    print("Type e to exit.")
 
     while True:
         if batch_file is not None:
