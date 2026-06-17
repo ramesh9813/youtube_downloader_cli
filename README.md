@@ -58,7 +58,7 @@ python --version
 Open PowerShell or Command Prompt in the project folder:
 
 ```powershell
-cd F:\desktop_july_19_2024\ramesh_file\project\software_project\youtube_update\video_downloader
+cd path\to\video_downloader
 ```
 
 Install the project in editable mode:
