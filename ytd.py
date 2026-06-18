@@ -14,6 +14,25 @@ BATCH_QUALITY = 720
 DOWNLOAD_ATTEMPTS = 2
 PROJECT_DIR = Path(__file__).resolve().parent
 LOCAL_DEPS_DIR = Path(os.environ.get("YTD_DEPS_DIR", PROJECT_DIR / ".ytd_env" / "site-packages"))
+BROWSER_LOCATIONS = {
+    "firefox": [
+        Path(os.environ.get("PROGRAMFILES", "")) / "Mozilla Firefox" / "firefox.exe",
+        Path(os.environ.get("PROGRAMFILES(X86)", "")) / "Mozilla Firefox" / "firefox.exe",
+    ],
+    "chrome": [
+        Path(os.environ.get("PROGRAMFILES", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+        Path(os.environ.get("PROGRAMFILES(X86)", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+    ],
+    "edge": [
+        Path(os.environ.get("PROGRAMFILES", "")) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+        Path(os.environ.get("PROGRAMFILES(X86)", "")) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+    ],
+    "brave": [
+        Path(os.environ.get("PROGRAMFILES", "")) / "BraveSoftware" / "Brave-Browser" / "Application" / "brave.exe",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "BraveSoftware" / "Brave-Browser" / "Application" / "brave.exe",
+    ],
+}
 REQUIRED_PACKAGES = {
     "yt-dlp": "yt_dlp",
     "imageio-ffmpeg": "imageio_ffmpeg",
@@ -190,6 +209,12 @@ def parse_args(argv):
     parser.add_argument("--quality", "-q", help="Preferred video quality, for example: 720")
     parser.add_argument("--file", "-f", dest="batch_file", help="Text file containing YouTube links")
     parser.add_argument("--output", "-o", default=".", help="Download directory")
+    parser.add_argument(
+        "--cookies-from-browser",
+        dest="cookies_browser",
+        help="Use YouTube cookies from a signed-in browser, for example: chrome",
+    )
+    parser.add_argument("--cookies", dest="cookie_file", help="Netscape-format cookies.txt file")
     args = parser.parse_args(cleaned)
 
     skip_next = False
@@ -219,20 +244,131 @@ def parse_args(argv):
     return args
 
 
-def fetch_info(link):
-    yt_dlp = import_yt_dlp()
-    options = {
-        "quiet": True,
-        "no_warnings": True,
-        "skip_download": True,
+def authentication_options(authentication):
+    if authentication.get("browser"):
+        return {"cookiesfrombrowser": (authentication["browser"],)}
+    if authentication.get("cookie_file"):
+        return {"cookiefile": authentication["cookie_file"]}
+    return {}
+
+
+def is_bot_check_error(exc):
+    message = str(exc).lower()
+    return (
+        "sign in to confirm you" in message
+        or "not a bot" in message
+        or "confirm your age" in message
+        or "login required" in message
+    )
+
+
+def is_cookie_access_error(exc):
+    message = str(exc).lower()
+    return "cookie" in message and any(
+        text in message
+        for text in (
+            "could not copy",
+            "failed to decrypt",
+            "unable to load",
+            "could not find",
+            "permission",
+            "database",
+        )
+    )
+
+
+def detected_browsers():
+    browsers = []
+    executable_names = {
+        "firefox": "firefox",
+        "chrome": "chrome",
+        "edge": "msedge",
+        "brave": "brave",
     }
-    spinner = Spinner("Fetching available qualities")
-    spinner.start()
-    try:
-        with yt_dlp.YoutubeDL(options) as ydl:
-            return ydl.extract_info(link, download=False)
-    finally:
-        spinner.stop()
+    for browser, locations in BROWSER_LOCATIONS.items():
+        if shutil.which(executable_names[browser]) or any(path.is_file() for path in locations):
+            browsers.append(browser)
+    return browsers
+
+
+def prompt_for_authentication(authentication):
+    browsers = detected_browsers()
+    if not browsers:
+        browsers = ["firefox", "chrome", "edge", "brave"]
+
+    print("\nYouTube requested browser verification.")
+    print("Open YouTube in a browser, sign in, and complete any verification shown there.")
+    print("The selected browser cookies are read locally and used only by this downloader process.")
+    print("Available authentication choices:")
+    for index, browser in enumerate(browsers, start=1):
+        print(f"{index}. Use {browser.title()} cookies")
+    cookie_file_index = len(browsers) + 1
+    print(f"{cookie_file_index}. Use a cookies.txt file")
+
+    while True:
+        selected = read_input("Choose authentication number, or e to cancel this download: ")
+        if is_exit_command(selected):
+            return False
+        if not selected.isdigit():
+            print("Enter a valid number from the list.")
+            continue
+
+        index = int(selected)
+        if 1 <= index <= len(browsers):
+            browser = browsers[index - 1]
+            authentication.clear()
+            authentication["browser"] = browser
+            print(f"Using signed-in {browser.title()} cookies for this CLI session.")
+            print("Retrying video information...")
+            return True
+        if index == cookie_file_index:
+            cookie_file = read_input("Enter path to cookies.txt, or e to cancel: ")
+            if is_exit_command(cookie_file):
+                return False
+            path = Path(cookie_file.strip('"').strip("'")).expanduser()
+            if not path.is_absolute():
+                path = Path.cwd() / path
+            if not path.is_file():
+                print(f"Cookie file not found: {path}")
+                continue
+            authentication.clear()
+            authentication["cookie_file"] = str(path.resolve())
+            print("Using the selected cookies.txt file for this CLI session.")
+            print("Retrying video information...")
+            return True
+        print("Enter a valid number from the list.")
+
+
+def fetch_info(link, authentication):
+    yt_dlp = import_yt_dlp()
+    while True:
+        options = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "logger": QuietDownloadLogger(),
+            **authentication_options(authentication),
+        }
+        spinner = Spinner("Fetching available video and audio formats")
+        spinner.start()
+        try:
+            with yt_dlp.YoutubeDL(options) as ydl:
+                return ydl.extract_info(link, download=False)
+        except Exception as exc:
+            spinner.stop()
+            if is_bot_check_error(exc):
+                print("\nYouTube blocked the anonymous request to confirm you are not a bot.")
+                if prompt_for_authentication(authentication):
+                    continue
+                raise RuntimeError("YouTube verification was cancelled.") from exc
+            if authentication and is_cookie_access_error(exc):
+                print(f"\nCould not read the selected browser cookies: {friendly_download_error(exc)}")
+                authentication.clear()
+                if prompt_for_authentication(authentication):
+                    continue
+            raise
+        finally:
+            spinner.stop()
 
 
 def list_qualities(info):
@@ -372,19 +508,33 @@ def friendly_download_error(exc):
     return short_text(message, 180)
 
 
-def download_with_retries(label, download_action):
+def download_with_retries(label, download_action, authentication):
     last_error = None
     for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
         print(f"\n{label} - attempt {attempt}/{DOWNLOAD_ATTEMPTS}")
-        try:
-            return download_action()
-        except KeyboardInterrupt:
-            raise
-        except Exception as exc:
-            last_error = exc
-            print(f"Attempt {attempt} failed: {friendly_download_error(exc)}")
-            if attempt < DOWNLOAD_ATTEMPTS:
-                print("Retrying automatically...")
+        while True:
+            try:
+                return download_action()
+            except KeyboardInterrupt:
+                raise
+            except Exception as exc:
+                if is_bot_check_error(exc):
+                    print("\nYouTube requested verification during the download.")
+                    if prompt_for_authentication(authentication):
+                        print(f"Retrying {label} with browser authentication...")
+                        continue
+                    raise RuntimeError("YouTube verification was cancelled.") from exc
+                if authentication and is_cookie_access_error(exc):
+                    print(f"\nCould not read the selected browser cookies: {friendly_download_error(exc)}")
+                    authentication.clear()
+                    if prompt_for_authentication(authentication):
+                        print(f"Retrying {label} with new authentication...")
+                        continue
+                last_error = exc
+                print(f"Attempt {attempt} failed: {friendly_download_error(exc)}")
+                if attempt < DOWNLOAD_ATTEMPTS:
+                    print("Retrying automatically...")
+                break
 
     raise last_error
 
@@ -424,7 +574,7 @@ def find_ffmpeg_location():
     return None
 
 
-def download_video(link, quality, output_dir):
+def download_video(link, quality, output_dir, authentication):
     yt_dlp = import_yt_dlp()
     output_path = Path(output_dir).resolve()
     output_path.mkdir(parents=True, exist_ok=True)
@@ -450,6 +600,7 @@ def download_video(link, quality, output_dir):
         "logger": QuietDownloadLogger(),
         "retries": 0,
         "fragment_retries": 0,
+        **authentication_options(authentication),
     }
     if ffmpeg_location:
         options["ffmpeg_location"] = ffmpeg_location
@@ -469,7 +620,7 @@ def download_video(link, quality, output_dir):
         activity.stop()
 
 
-def download_audio(link, audio_format, output_dir):
+def download_audio(link, audio_format, output_dir, authentication):
     yt_dlp = import_yt_dlp()
     output_path = Path(output_dir).resolve()
     output_path.mkdir(parents=True, exist_ok=True)
@@ -486,6 +637,7 @@ def download_audio(link, audio_format, output_dir):
         "logger": QuietDownloadLogger(),
         "retries": 0,
         "fragment_retries": 0,
+        **authentication_options(authentication),
     }
 
     activity.start()
@@ -497,7 +649,14 @@ def download_audio(link, audio_format, output_dir):
         activity.stop()
 
 
-def download_one_result(link, requested_quality, output_dir, allow_quality_prompt=True, show_summary=True):
+def download_one_result(
+    link,
+    requested_quality,
+    output_dir,
+    authentication,
+    allow_quality_prompt=True,
+    show_summary=True,
+):
     if not link:
         print("No link provided.")
         return {
@@ -510,7 +669,7 @@ def download_one_result(link, requested_quality, output_dir, allow_quality_promp
         }
 
     try:
-        info = fetch_info(link)
+        info = fetch_info(link, authentication)
         qualities = list_qualities(info)
         audio_formats = list_audio_formats(info)
         selected_quality = best_quality_at_or_below(qualities, requested_quality)
@@ -541,7 +700,13 @@ def download_one_result(link, requested_quality, output_dir, allow_quality_promp
                 try:
                     result, saved_path = download_with_retries(
                         label,
-                        lambda item=audio_format: download_audio(link, item, output_dir),
+                        lambda item=audio_format: download_audio(
+                            link,
+                            item,
+                            output_dir,
+                            authentication,
+                        ),
+                        authentication,
                     )
                     selected_format = audio_format
                     break
@@ -562,7 +727,13 @@ def download_one_result(link, requested_quality, output_dir, allow_quality_promp
                 try:
                     result, saved_path = download_with_retries(
                         f"Video {quality}p",
-                        lambda value=quality: download_video(link, value, output_dir),
+                        lambda value=quality: download_video(
+                            link,
+                            value,
+                            output_dir,
+                            authentication,
+                        ),
+                        authentication,
                     )
                     selected_quality = quality
                     break
@@ -607,14 +778,14 @@ def download_one_result(link, requested_quality, output_dir, allow_quality_promp
             "message": "Cancelled.",
         }
     except Exception as exc:
-        print(f"\nError: {exc}")
+        print(f"\nError: {friendly_download_error(exc)}")
         return {
             "status": "failed",
             "link": link,
             "quality": f"{requested_quality}p" if requested_quality else "",
             "title": "",
             "saved_path": "",
-            "message": str(exc),
+            "message": friendly_download_error(exc),
         }
 
 
@@ -718,7 +889,7 @@ def print_batch_table(results):
     print(f"Downloaded: {downloaded} | Failed: {failed} | Total: {len(results)}")
 
 
-def download_batch(batch_file, output_dir, quality=BATCH_QUALITY):
+def download_batch(batch_file, output_dir, authentication, quality=BATCH_QUALITY):
     batch_path = resolve_batch_file(batch_file, Path.cwd())
     if batch_path is None:
         return True
@@ -753,6 +924,7 @@ def download_batch(batch_file, output_dir, quality=BATCH_QUALITY):
             link,
             quality,
             output_dir,
+            authentication,
             allow_quality_prompt=False,
             show_summary=False,
         )
@@ -793,10 +965,24 @@ def main(argv=None):
     link = args.link
     requested_quality = args.quality
     batch_file = args.batch_file
+    authentication = {}
+    if args.cookies_browser:
+        authentication["browser"] = args.cookies_browser.lower()
+    elif args.cookie_file:
+        cookie_file = Path(args.cookie_file).expanduser().resolve()
+        if not cookie_file.is_file():
+            print(f"Cookie file not found: {cookie_file}")
+            return 2
+        authentication["cookie_file"] = str(cookie_file)
 
     while True:
         if batch_file is not None:
-            download_batch(batch_file, args.output, requested_quality or BATCH_QUALITY)
+            download_batch(
+                batch_file,
+                args.output,
+                authentication,
+                requested_quality or BATCH_QUALITY,
+            )
             batch_file = None
             link = None
             requested_quality = None
@@ -819,7 +1005,7 @@ def main(argv=None):
                 print("Exited.")
                 return 0
 
-        result = download_one_result(link, requested_quality, args.output)
+        result = download_one_result(link, requested_quality, args.output, authentication)
         if result["status"] == "cancelled":
             return 0
 

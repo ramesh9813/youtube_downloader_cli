@@ -22,6 +22,7 @@ The downloader uses:
 - Show download progress with percentage, speed, and ETA when available.
 - Show an animated connection status before download progress starts.
 - Retry a failed format twice, then automatically try another available format.
+- Detect YouTube anti-bot verification and offer signed-in browser cookie authentication.
 - Print a final summary with link, video title, quality, saved file, and directory.
 - Save videos in the directory where the command prompt is open by default.
 - Prepare required Python dependencies automatically on first download.
@@ -270,6 +271,18 @@ Without `https://`:
 
 ```powershell
 ytd youtube.com/watch?v=VIDEO_ID 720
+```
+
+Use cookies from a browser where you are signed into YouTube:
+
+```powershell
+ytd youtube.com/watch?v=VIDEO_ID 720 --cookies-from-browser chrome
+```
+
+Or use a Netscape-format cookies file:
+
+```powershell
+ytd youtube.com/watch?v=VIDEO_ID 720 --cookies "cookies.txt"
 ```
 
 Download many videos from a text file:
@@ -591,6 +604,39 @@ Audio downloads use the same behavior. After two failures, the downloader automa
 
 Raw `yt-dlp` timeout messages are hidden and replaced with these shorter status messages so the user can see what the application is doing.
 
+### YouTube Anti-Bot Verification
+
+YouTube may allow several downloads and then require verification:
+
+```text
+Sign in to confirm you're not a bot
+```
+
+The downloader detects this response, hides the repeated raw error, and asks whether it should use cookies from a signed-in browser:
+
+```text
+YouTube requested browser verification.
+Available authentication choices:
+1. Use Firefox cookies
+2. Use Chrome cookies
+3. Use Edge cookies
+4. Use a cookies.txt file
+Choose authentication number, or e to cancel this download:
+```
+
+Before choosing:
+
+1. Open YouTube in the browser.
+2. Sign into YouTube.
+3. Complete any CAPTCHA or verification shown by YouTube.
+4. Return to the CLI and select that browser.
+
+The cookies are read locally by `yt-dlp`. The script does not export them or save them in the project. The selected authentication is reused only for the current CLI session, including the remaining links in batch mode.
+
+Firefox often works more reliably for cookie access. Chromium browsers can sometimes lock or restrict their cookie database. If one browser fails, the CLI lets you select another browser or a `cookies.txt` file.
+
+Using an account for many automated requests can cause temporary limits or account risk. Download at a reasonable rate and use browser cookies only when YouTube requires verification.
+
 ### Repeat Downloads
 
 The `main()` function runs a loop.
@@ -726,9 +772,11 @@ These are downloaded videos and temporary download files. Video files should not
 .env
 .env.*
 *.local
+cookies.txt
+*cookies*.txt
 ```
 
-These are local configuration files. If the project later uses API keys or private settings, they should stay out of Git.
+These are local configuration and secret files. Cookie files contain private browser login session data and must never be committed or shared.
 
 ```text
 .vscode/
@@ -819,6 +867,26 @@ python -m pip install --upgrade yt-dlp
 ```
 
 YouTube changes often, so keeping `yt-dlp` updated is important.
+
+### Sign in to confirm you are not a bot
+
+Open YouTube in a signed-in browser and complete any verification. Run the download again. When prompted, select that browser.
+
+You can also select the browser directly:
+
+```powershell
+ytd URL 720 --cookies-from-browser firefox
+ytd URL 720 --cookies-from-browser chrome
+ytd URL 720 --cookies-from-browser edge
+```
+
+For a cookie file:
+
+```powershell
+ytd URL 720 --cookies "cookies.txt"
+```
+
+Do not commit or share cookie files. They contain private login session data.
 
 ## Important Note
 

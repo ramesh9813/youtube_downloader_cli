@@ -40,6 +40,8 @@ downloads/
 .env
 .env.*
 *.local
+cookies.txt
+*cookies*.txt
 
 # Editor and IDE files
 .vscode/
