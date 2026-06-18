@@ -245,6 +245,8 @@ def parse_args(argv):
 
 
 def authentication_options(authentication):
+    if not authentication.get("use_for_current", authentication.get("forced", False)):
+        return {}
     if authentication.get("browser"):
         return {"cookiesfrombrowser": (authentication["browser"],)}
     if authentication.get("cookie_file"):
@@ -291,17 +293,41 @@ def detected_browsers():
     return browsers
 
 
+def browser_failure_count(authentication, browser):
+    return authentication.get("browser_failures", {}).get(browser, 0)
+
+
+def mark_browser_failed(authentication, browser):
+    failures = authentication.setdefault("browser_failures", {})
+    failures[browser] = failures.get(browser, 0) + 1
+    authentication.pop("browser", None)
+    authentication.pop("cookie_file", None)
+    authentication["use_for_current"] = False
+
+
+def clear_active_authentication(authentication):
+    authentication.pop("browser", None)
+    authentication.pop("cookie_file", None)
+    authentication["use_for_current"] = False
+
+
 def prompt_for_authentication(authentication):
-    browsers = detected_browsers()
-    if not browsers:
-        browsers = ["firefox", "chrome", "edge", "brave"]
+    browsers = [
+        browser
+        for browser in detected_browsers()
+        if browser_failure_count(authentication, browser) < 2
+    ]
 
     print("\nYouTube requested browser verification.")
     print("Open YouTube in a browser, sign in, and complete any verification shown there.")
+    print("Then fully close every window of that browser before selecting it below.")
     print("The selected browser cookies are read locally and used only by this downloader process.")
     print("Available authentication choices:")
     for index, browser in enumerate(browsers, start=1):
-        print(f"{index}. Use {browser.title()} cookies")
+        if browser_failure_count(authentication, browser):
+            print(f"{index}. Retry {browser.title()} cookies after closing it (final attempt)")
+        else:
+            print(f"{index}. Use {browser.title()} cookies")
     cookie_file_index = len(browsers) + 1
     print(f"{cookie_file_index}. Use a cookies.txt file")
 
@@ -316,8 +342,9 @@ def prompt_for_authentication(authentication):
         index = int(selected)
         if 1 <= index <= len(browsers):
             browser = browsers[index - 1]
-            authentication.clear()
+            authentication.pop("cookie_file", None)
             authentication["browser"] = browser
+            authentication["use_for_current"] = True
             print(f"Using signed-in {browser.title()} cookies for this CLI session.")
             print("Retrying video information...")
             return True
@@ -331,8 +358,9 @@ def prompt_for_authentication(authentication):
             if not path.is_file():
                 print(f"Cookie file not found: {path}")
                 continue
-            authentication.clear()
+            authentication.pop("browser", None)
             authentication["cookie_file"] = str(path.resolve())
+            authentication["use_for_current"] = True
             print("Using the selected cookies.txt file for this CLI session.")
             print("Retrying video information...")
             return True
@@ -341,6 +369,7 @@ def prompt_for_authentication(authentication):
 
 def fetch_info(link, authentication):
     yt_dlp = import_yt_dlp()
+    authentication["use_for_current"] = bool(authentication.get("forced"))
     while True:
         options = {
             "quiet": True,
@@ -358,14 +387,36 @@ def fetch_info(link, authentication):
             spinner.stop()
             if is_bot_check_error(exc):
                 print("\nYouTube blocked the anonymous request to confirm you are not a bot.")
+                if (
+                    not authentication.get("use_for_current")
+                    and (authentication.get("browser") or authentication.get("cookie_file"))
+                ):
+                    authentication["use_for_current"] = True
+                    print("Retrying with the authentication selected earlier in this CLI session...")
+                    continue
                 if prompt_for_authentication(authentication):
                     continue
                 raise RuntimeError("YouTube verification was cancelled.") from exc
             if authentication and is_cookie_access_error(exc):
+                failed_browser = authentication.get("browser")
                 print(f"\nCould not read the selected browser cookies: {friendly_download_error(exc)}")
-                authentication.clear()
+                if failed_browser:
+                    mark_browser_failed(authentication, failed_browser)
+                    if browser_failure_count(authentication, failed_browser) < 2:
+                        print(
+                            f"Fully close all {failed_browser.title()} windows and background processes, "
+                            "then choose its final retry."
+                        )
+                    else:
+                        print(
+                            f"{failed_browser.title()} cookie access failed twice and will not be offered "
+                            "again in this CLI session."
+                        )
+                else:
+                    clear_active_authentication(authentication)
                 if prompt_for_authentication(authentication):
                     continue
+                raise RuntimeError("Browser authentication was cancelled.") from exc
             raise
         finally:
             spinner.stop()
@@ -497,6 +548,10 @@ def make_progress_hook(activity=None):
 def friendly_download_error(exc):
     message = str(exc).replace("\r", " ").replace("\n", " ").strip()
     lowered = message.lower()
+    if "could not copy" in lowered and "cookie database" in lowered:
+        return "The browser cookie database is locked or unavailable."
+    if "failed to decrypt" in lowered and "cookie" in lowered:
+        return "The browser cookies could not be decrypted."
     if "timed out" in lowered or "timeout" in lowered:
         return "The media server timed out while sending data."
     if "http error 403" in lowered:
@@ -520,16 +575,38 @@ def download_with_retries(label, download_action, authentication):
             except Exception as exc:
                 if is_bot_check_error(exc):
                     print("\nYouTube requested verification during the download.")
+                    if (
+                        not authentication.get("use_for_current")
+                        and (authentication.get("browser") or authentication.get("cookie_file"))
+                    ):
+                        authentication["use_for_current"] = True
+                        print(f"Retrying {label} with authentication from this CLI session...")
+                        continue
                     if prompt_for_authentication(authentication):
                         print(f"Retrying {label} with browser authentication...")
                         continue
                     raise RuntimeError("YouTube verification was cancelled.") from exc
                 if authentication and is_cookie_access_error(exc):
+                    failed_browser = authentication.get("browser")
                     print(f"\nCould not read the selected browser cookies: {friendly_download_error(exc)}")
-                    authentication.clear()
+                    if failed_browser:
+                        mark_browser_failed(authentication, failed_browser)
+                        if browser_failure_count(authentication, failed_browser) < 2:
+                            print(
+                                f"Fully close all {failed_browser.title()} windows and background "
+                                "processes before the final retry."
+                            )
+                        else:
+                            print(
+                                f"{failed_browser.title()} cookie access failed twice and is now disabled "
+                                "for this CLI session."
+                            )
+                    else:
+                        clear_active_authentication(authentication)
                     if prompt_for_authentication(authentication):
                         print(f"Retrying {label} with new authentication...")
                         continue
+                    raise RuntimeError("Browser authentication was cancelled.") from exc
                 last_error = exc
                 print(f"Attempt {attempt} failed: {friendly_download_error(exc)}")
                 if attempt < DOWNLOAD_ATTEMPTS:
@@ -968,12 +1045,16 @@ def main(argv=None):
     authentication = {}
     if args.cookies_browser:
         authentication["browser"] = args.cookies_browser.lower()
+        authentication["forced"] = True
+        authentication["use_for_current"] = True
     elif args.cookie_file:
         cookie_file = Path(args.cookie_file).expanduser().resolve()
         if not cookie_file.is_file():
             print(f"Cookie file not found: {cookie_file}")
             return 2
         authentication["cookie_file"] = str(cookie_file)
+        authentication["forced"] = True
+        authentication["use_for_current"] = True
 
     while True:
         if batch_file is not None:

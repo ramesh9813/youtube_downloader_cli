@@ -633,7 +633,19 @@ Before choosing:
 
 The cookies are read locally by `yt-dlp`. The script does not export them or save them in the project. The selected authentication is reused only for the current CLI session, including the remaining links in batch mode.
 
-Firefox often works more reliably for cookie access. Chromium browsers can sometimes lock or restrict their cookie database. If one browser fails, the CLI lets you select another browser or a `cookies.txt` file.
+For every link, the downloader first tries the normal anonymous request. It uses browser authentication only if YouTube responds with a verification requirement. If authentication was already selected earlier in the CLI session, it retries with that method without asking again.
+
+Firefox often works more reliably for cookie access. Chromium browsers can lock or restrict their cookie database while the browser is running. For Chrome or Edge:
+
+1. Open YouTube and sign in.
+2. Complete YouTube's CAPTCHA or verification.
+3. Fully close every browser window.
+4. Check Task Manager and close remaining browser background processes if necessary.
+5. Select that browser in `ytd`.
+
+If browser cookie access fails, the CLI offers one clearly marked final retry. After a second failure, that browser is removed from the choices for the current session. This prevents the authentication prompt from looping forever.
+
+If the browser still cannot be read, use a Netscape-format `cookies.txt` file. Keep it private and delete it when it is no longer needed.
 
 Using an account for many automated requests can cause temporary limits or account risk. Download at a reasonable rate and use browser cookies only when YouTube requires verification.
 
@@ -871,6 +883,14 @@ YouTube changes often, so keeping `yt-dlp` updated is important.
 ### Sign in to confirm you are not a bot
 
 Open YouTube in a signed-in browser and complete any verification. Run the download again. When prompted, select that browser.
+
+For Chrome and Edge on Windows, fully close the browser before selecting it. An open Chromium browser can lock its cookie database and cause:
+
+```text
+Could not copy Chrome cookie database
+```
+
+The downloader permits one final browser retry, then removes that failed browser from the current session to avoid repeated prompts.
 
 You can also select the browser directly:
 
