@@ -11,6 +11,7 @@ from pathlib import Path
 
 EXIT_COMMANDS = {"e", "exit", "q", "quit"}
 BATCH_QUALITY = 720
+DOWNLOAD_ATTEMPTS = 2
 PROJECT_DIR = Path(__file__).resolve().parent
 LOCAL_DEPS_DIR = Path(os.environ.get("YTD_DEPS_DIR", PROJECT_DIR / ".ytd_env" / "site-packages"))
 REQUIRED_PACKAGES = {
@@ -89,11 +90,17 @@ class Spinner:
         self.message = message
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
+        self._started = False
+        self._stopped = False
 
     def start(self):
+        self._started = True
         self._thread.start()
 
     def stop(self):
+        if not self._started or self._stopped:
+            return
+        self._stopped = True
         self._stop.set()
         self._thread.join(timeout=1)
         print("\r" + " " * 80 + "\r", end="", flush=True)
@@ -104,6 +111,17 @@ class Spinner:
                 break
             print(f"\r{frame} {self.message}", end="", flush=True)
             time.sleep(0.12)
+
+
+class QuietDownloadLogger:
+    def debug(self, message):
+        pass
+
+    def warning(self, message):
+        pass
+
+    def error(self, message):
+        pass
 
 
 def normalize_quality(value):
@@ -291,7 +309,12 @@ def choose_format(qualities, audio_formats):
         if selected.isdigit():
             index = int(selected)
             if 1 <= index <= len(choices):
-                return choices[index - 1]
+                choice = choices[index - 1]
+                if choice["type"] == "video":
+                    print(f"Selected video quality: {choice['quality']}p")
+                else:
+                    print(f"Selected audio format: {audio_format_label(choice)}")
+                return choice
         print("Enter a valid number from the list.")
 
 
@@ -305,11 +328,18 @@ def best_quality_at_or_below(qualities, requested):
     return max(lower) if lower else min(item["height"] for item in qualities)
 
 
-def make_progress_hook():
+def audio_format_label(audio_format):
+    bitrate = f", {audio_format['abr']:.0f} kbps" if audio_format.get("abr") else ""
+    return f"{audio_format['ext']} ({audio_format['acodec']}{bitrate})"
+
+
+def make_progress_hook(activity=None):
     last_line_len = 0
 
     def hook(status):
         nonlocal last_line_len
+        if activity:
+            activity.stop()
         if status.get("status") == "downloading":
             percent = status.get("_percent_str", "").strip()
             speed = status.get("_speed_str", "").strip()
@@ -326,6 +356,55 @@ def make_progress_hook():
             print("\rDownload finished. Processing media..." + " " * 20)
 
     return hook
+
+
+def friendly_download_error(exc):
+    message = str(exc).replace("\r", " ").replace("\n", " ").strip()
+    lowered = message.lower()
+    if "timed out" in lowered or "timeout" in lowered:
+        return "The media server timed out while sending data."
+    if "http error 403" in lowered:
+        return "The media server refused this format (HTTP 403)."
+    if "http error 429" in lowered:
+        return "YouTube temporarily rate-limited the request (HTTP 429)."
+    if "unable to download" in lowered:
+        return "The selected media stream could not be downloaded."
+    return short_text(message, 180)
+
+
+def download_with_retries(label, download_action):
+    last_error = None
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        print(f"\n{label} - attempt {attempt}/{DOWNLOAD_ATTEMPTS}")
+        try:
+            return download_action()
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:
+            last_error = exc
+            print(f"Attempt {attempt} failed: {friendly_download_error(exc)}")
+            if attempt < DOWNLOAD_ATTEMPTS:
+                print("Retrying automatically...")
+
+    raise last_error
+
+
+def video_fallback_order(qualities, selected_quality):
+    available = [item["height"] for item in qualities]
+    lower = sorted((height for height in available if height < selected_quality), reverse=True)
+    higher = sorted(height for height in available if height > selected_quality)
+    return [selected_quality, *lower, *higher]
+
+
+def audio_fallback_order(audio_formats, selected_format):
+    return [
+        selected_format,
+        *[
+            item
+            for item in audio_formats
+            if item["format_id"] != selected_format["format_id"]
+        ],
+    ]
 
 
 def find_ffmpeg_location():
@@ -359,27 +438,35 @@ def download_video(link, quality, output_dir):
         print("Downloading the best single-file video format available.")
         format_selector = f"best[height<={quality}]/best"
 
+    activity = Spinner(f"Connecting to media server for {quality}p")
     options = {
         "format": format_selector,
         "merge_output_format": "mp4",
         "outtmpl": str(output_path / "%(title)s [%(id)s].%(ext)s"),
-        "progress_hooks": [make_progress_hook()],
+        "progress_hooks": [make_progress_hook(activity)],
         "noprogress": True,
         "quiet": True,
         "no_warnings": True,
+        "logger": QuietDownloadLogger(),
+        "retries": 0,
+        "fragment_retries": 0,
     }
     if ffmpeg_location:
         options["ffmpeg_location"] = ffmpeg_location
 
-    with yt_dlp.YoutubeDL(options) as ydl:
-        result = ydl.extract_info(link, download=True)
-        filename = ydl.prepare_filename(result)
-        final_path = Path(filename)
-        if final_path.suffix != ".mp4":
-            mp4_path = final_path.with_suffix(".mp4")
-            if mp4_path.exists():
-                final_path = mp4_path
-        return result, final_path
+    activity.start()
+    try:
+        with yt_dlp.YoutubeDL(options) as ydl:
+            result = ydl.extract_info(link, download=True)
+            filename = ydl.prepare_filename(result)
+            final_path = Path(filename)
+            if final_path.suffix != ".mp4":
+                mp4_path = final_path.with_suffix(".mp4")
+                if mp4_path.exists():
+                    final_path = mp4_path
+            return result, final_path
+    finally:
+        activity.stop()
 
 
 def download_audio(link, audio_format, output_dir):
@@ -387,18 +474,27 @@ def download_audio(link, audio_format, output_dir):
     output_path = Path(output_dir).resolve()
     output_path.mkdir(parents=True, exist_ok=True)
 
+    label = audio_format_label(audio_format)
+    activity = Spinner(f"Connecting to media server for audio {label}")
     options = {
         "format": audio_format["format_id"],
         "outtmpl": str(output_path / "%(title)s [%(id)s].%(ext)s"),
-        "progress_hooks": [make_progress_hook()],
+        "progress_hooks": [make_progress_hook(activity)],
         "noprogress": True,
         "quiet": True,
         "no_warnings": True,
+        "logger": QuietDownloadLogger(),
+        "retries": 0,
+        "fragment_retries": 0,
     }
 
-    with yt_dlp.YoutubeDL(options) as ydl:
-        result = ydl.extract_info(link, download=True)
-        return result, Path(ydl.prepare_filename(result))
+    activity.start()
+    try:
+        with yt_dlp.YoutubeDL(options) as ydl:
+            result = ydl.extract_info(link, download=True)
+            return result, Path(ydl.prepare_filename(result))
+    finally:
+        activity.stop()
 
 
 def download_one_result(link, requested_quality, output_dir, allow_quality_prompt=True, show_summary=True):
@@ -439,13 +535,44 @@ def download_one_result(link, requested_quality, output_dir, allow_quality_promp
             print(f"Requested {requested_quality}p is not available. Using {selected_quality}p instead.")
 
         if selected_format and selected_format["type"] == "audio":
-            result, saved_path = download_audio(link, selected_format, output_dir)
+            candidates = audio_fallback_order(audio_formats, selected_format)
+            for index, audio_format in enumerate(candidates):
+                label = f"Audio {audio_format_label(audio_format)}"
+                try:
+                    result, saved_path = download_with_retries(
+                        label,
+                        lambda item=audio_format: download_audio(link, item, output_dir),
+                    )
+                    selected_format = audio_format
+                    break
+                except Exception:
+                    if index + 1 >= len(candidates):
+                        raise
+                    next_label = audio_format_label(candidates[index + 1])
+                    print(f"Both attempts failed for {label}.")
+                    print(f"Trying another audio format: {next_label}")
+
             format_label = f"Audio {selected_format['ext']} ({selected_format['acodec']})"
             media_name = "Audio name"
             format_name = "Audio format"
             location_name = "Your audio downloaded at this"
         else:
-            result, saved_path = download_video(link, selected_quality, output_dir)
+            candidates = video_fallback_order(qualities, selected_quality)
+            for index, quality in enumerate(candidates):
+                try:
+                    result, saved_path = download_with_retries(
+                        f"Video {quality}p",
+                        lambda value=quality: download_video(link, value, output_dir),
+                    )
+                    selected_quality = quality
+                    break
+                except Exception:
+                    if index + 1 >= len(candidates):
+                        raise
+                    next_quality = candidates[index + 1]
+                    print(f"Both attempts failed for video {quality}p.")
+                    print(f"Trying another video quality: {next_quality}p")
+
             format_label = f"{selected_quality}p"
             media_name = "Video name"
             format_name = "Quality"

@@ -20,6 +20,8 @@ The downloader uses:
 - Type `e`, `exit`, `q`, or `quit` to close the CLI.
 - Continue downloading more videos in one CLI session.
 - Show download progress with percentage, speed, and ETA when available.
+- Show an animated connection status before download progress starts.
+- Retry a failed format twice, then automatically try another available format.
 - Print a final summary with link, video title, quality, saved file, and directory.
 - Save videos in the directory where the command prompt is open by default.
 - Prepare required Python dependencies automatically on first download.
@@ -552,7 +554,7 @@ If FFmpeg is not available at all, the script falls back to a single-file video 
 
 The `make_progress_hook()` function receives progress updates from `yt-dlp`.
 
-It displays:
+Before progress data is available, an animated status shows that the downloader is connecting to the media server. It then displays:
 
 - Download percentage
 - Speed
@@ -563,6 +565,31 @@ Example:
 ```text
 Downloading 42.8% at 2.14MiB/s ETA 00:20
 ```
+
+### Automatic Retry And Format Fallback
+
+Every selected video quality or audio format is attempted up to two times.
+
+The CLI reports each stage:
+
+```text
+Video 720p - attempt 1/2
+| Connecting to media server for 720p
+Attempt 1 failed: The media server timed out while sending data.
+Retrying automatically...
+Video 720p - attempt 2/2
+```
+
+If both video attempts fail, the downloader tries the next available quality. Lower qualities are tried first because they usually require less bandwidth. If no lower quality remains, it tries another available higher quality.
+
+```text
+Both attempts failed for video 720p.
+Trying another video quality: 480p
+```
+
+Audio downloads use the same behavior. After two failures, the downloader automatically tries another available audio-only stream.
+
+Raw `yt-dlp` timeout messages are hidden and replaced with these shorter status messages so the user can see what the application is doing.
 
 ### Repeat Downloads
 
