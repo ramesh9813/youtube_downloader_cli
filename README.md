@@ -14,7 +14,7 @@ The downloader uses:
 
 - Run `ytd` from the terminal.
 - Paste a YouTube link interactively.
-- Choose a video quality from a numbered list.
+- Choose a video quality or an available audio-only format from a numbered list.
 - Download directly with a link and quality, for example `ytd youtube.com/watch?v=VIDEO_ID 720`.
 - Download many videos from a text file with `ytd @filename`.
 - Type `e`, `exit`, `q`, or `quit` to close the CLI.
@@ -141,21 +141,26 @@ Paste a YouTube link:
 youtube.com/watch?v=VIDEO_ID
 ```
 
-Then choose a quality from the numbered list:
+Then choose a video quality or audio-only format from the numbered list:
 
 ```text
-Available qualities:
+Available video qualities:
 1. 1080p (mp4, webm)
 2. 720p (mp4, webm)
 3. 480p (mp4)
-Choose quality number, or e to exit:
+Available audio formats:
+4. Audio m4a (mp4a.40.2, 129 kbps)
+5. Audio webm (opus, 128 kbps)
+Choose video or audio number, or e to exit:
 ```
 
-Enter a number such as:
+Enter a video number such as `2`, or an audio number such as `4`.
 
 ```text
-2
+4
 ```
+
+Audio choices are the audio-only streams actually available for that YouTube link. The downloaded file keeps the listed format, such as `.m4a` or `.webm`.
 
 After the download finishes, the CLI asks for another link. Type `e` to exit.
 
@@ -368,9 +373,9 @@ The program flow is:
 3. For single video mode, normalize the YouTube link.
 4. For file mode, read YouTube links from the selected text file.
 5. Fetch video metadata using `yt-dlp`.
-6. Read available video formats from the metadata.
-7. Group available formats by video height, such as 1080p, 720p, and 480p.
-8. Ask the user to select a quality for single video mode, unless quality was already provided.
+6. Read available video and audio-only formats from the metadata.
+7. Group video formats by height and audio formats by extension and codec.
+8. Ask the user to select a video quality or audio format for single video mode, unless video quality was already provided.
 9. Use `720p` automatically for batch file mode.
 10. Select the best video and audio streams for the requested quality.
 11. Download the media.
@@ -457,7 +462,7 @@ Supported link starts include:
 
 The `fetch_info()` function asks `yt-dlp` for video information without downloading.
 
-The `list_qualities()` function checks all available video formats and groups them by height.
+The `list_qualities()` function checks all available video formats and groups them by height. The `list_audio_formats()` function finds audio-only streams and keeps the best bitrate for each extension and codec combination.
 
 Example qualities:
 
@@ -467,6 +472,15 @@ Example qualities:
 480p
 360p
 ```
+
+Example audio choices:
+
+```text
+Audio m4a (mp4a.40.2, 129 kbps)
+Audio webm (opus, 128 kbps)
+```
+
+Selecting an audio choice downloads only that stream and preserves its available extension. It does not download or merge the video stream.
 
 If direct quality is provided, for example `720`, the script tries to use exact `720p`.
 
@@ -569,7 +583,10 @@ Available qualities:
 1. 1080p (webm)
 2. 720p (mp4, webm)
 3. 480p (mp4)
-Choose quality number, or e to exit: 2
+Available audio formats:
+4. Audio m4a (mp4a.40.2, 129 kbps)
+5. Audio webm (opus, 128 kbps)
+Choose video or audio number, or e to exit: 2
 Downloading 100.0%
 Download finished. Processing media...
 

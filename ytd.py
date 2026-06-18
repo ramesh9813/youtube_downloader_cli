@@ -235,23 +235,63 @@ def list_qualities(info):
     return sorted(choices.values(), key=lambda item: item["height"], reverse=True)
 
 
-def choose_quality(qualities):
+def list_audio_formats(info):
+    choices = {}
+    for fmt in info.get("formats", []):
+        if (
+            not fmt.get("format_id")
+            or fmt.get("vcodec") != "none"
+            or fmt.get("acodec") in {None, "none"}
+        ):
+            continue
+
+        ext = fmt.get("ext") or "unknown"
+        abr = fmt.get("abr") or fmt.get("tbr") or 0
+        key = (ext, fmt.get("acodec") or "unknown")
+        current = choices.get(key)
+        if current is None or abr > current["abr"]:
+            choices[key] = {
+                "type": "audio",
+                "format_id": fmt.get("format_id"),
+                "ext": ext,
+                "acodec": fmt.get("acodec") or "unknown",
+                "abr": abr,
+            }
+
+    return sorted(
+        choices.values(),
+        key=lambda item: (item["abr"], item["ext"]),
+        reverse=True,
+    )
+
+
+def choose_format(qualities, audio_formats):
     if not qualities:
         raise RuntimeError("No downloadable video qualities were found for this link.")
 
-    print("Available qualities:")
+    choices = []
+    print("Available video qualities:")
     for index, item in enumerate(qualities, start=1):
         extensions = ", ".join(sorted(item["exts"]))
         print(f"{index}. {item['height']}p ({extensions})")
+        choices.append({"type": "video", "quality": item["height"]})
+
+    if audio_formats:
+        print("Available audio formats:")
+        for item in audio_formats:
+            index = len(choices) + 1
+            bitrate = f", {item['abr']:.0f} kbps" if item["abr"] else ""
+            print(f"{index}. Audio {item['ext']} ({item['acodec']}{bitrate})")
+            choices.append(item)
 
     while True:
-        selected = read_input("Choose quality number, or e to exit: ")
+        selected = read_input("Choose video or audio number, or e to exit: ")
         if is_exit_command(selected):
             return None
         if selected.isdigit():
             index = int(selected)
-            if 1 <= index <= len(qualities):
-                return qualities[index - 1]["height"]
+            if 1 <= index <= len(choices):
+                return choices[index - 1]
         print("Enter a valid number from the list.")
 
 
@@ -342,6 +382,25 @@ def download_video(link, quality, output_dir):
         return result, final_path
 
 
+def download_audio(link, audio_format, output_dir):
+    yt_dlp = import_yt_dlp()
+    output_path = Path(output_dir).resolve()
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    options = {
+        "format": audio_format["format_id"],
+        "outtmpl": str(output_path / "%(title)s [%(id)s].%(ext)s"),
+        "progress_hooks": [make_progress_hook()],
+        "noprogress": True,
+        "quiet": True,
+        "no_warnings": True,
+    }
+
+    with yt_dlp.YoutubeDL(options) as ydl:
+        result = ydl.extract_info(link, download=True)
+        return result, Path(ydl.prepare_filename(result))
+
+
 def download_one_result(link, requested_quality, output_dir, allow_quality_prompt=True, show_summary=True):
     if not link:
         print("No link provided.")
@@ -357,13 +416,15 @@ def download_one_result(link, requested_quality, output_dir, allow_quality_promp
     try:
         info = fetch_info(link)
         qualities = list_qualities(info)
+        audio_formats = list_audio_formats(info)
         selected_quality = best_quality_at_or_below(qualities, requested_quality)
+        selected_format = None
 
         if not selected_quality:
             if not allow_quality_prompt:
                 raise RuntimeError("No downloadable video quality was found.")
-            selected_quality = choose_quality(qualities)
-            if selected_quality is None:
+            selected_format = choose_format(qualities, audio_formats)
+            if selected_format is None:
                 return {
                     "status": "cancelled",
                     "link": link,
@@ -372,24 +433,38 @@ def download_one_result(link, requested_quality, output_dir, allow_quality_promp
                     "saved_path": "",
                     "message": "Cancelled.",
                 }
+            if selected_format["type"] == "video":
+                selected_quality = selected_format["quality"]
         elif requested_quality and selected_quality != requested_quality:
             print(f"Requested {requested_quality}p is not available. Using {selected_quality}p instead.")
 
-        result, saved_path = download_video(link, selected_quality, output_dir)
+        if selected_format and selected_format["type"] == "audio":
+            result, saved_path = download_audio(link, selected_format, output_dir)
+            format_label = f"Audio {selected_format['ext']} ({selected_format['acodec']})"
+            media_name = "Audio name"
+            format_name = "Audio format"
+            location_name = "Your audio downloaded at this"
+        else:
+            result, saved_path = download_video(link, selected_quality, output_dir)
+            format_label = f"{selected_quality}p"
+            media_name = "Video name"
+            format_name = "Quality"
+            location_name = "Your video downloaded at this"
+
         title = result.get("title", "Unknown title")
 
         if show_summary:
             print("\nSummary")
             print(f"Link: {link}")
-            print(f"Video name: {title}")
-            print(f"Quality: {selected_quality}p")
+            print(f"{media_name}: {title}")
+            print(f"{format_name}: {format_label}")
             print(f"Saved file: {saved_path}")
-            print(f"Your video downloaded at this: {saved_path.parent}")
+            print(f"{location_name}: {saved_path.parent}")
 
         return {
             "status": "downloaded",
             "link": link,
-            "quality": f"{selected_quality}p",
+            "quality": format_label,
             "title": title,
             "saved_path": str(saved_path),
             "message": "Downloaded.",
