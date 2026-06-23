@@ -14,17 +14,25 @@ The downloader uses:
 
 - Run `ytd` from the terminal.
 - Paste a YouTube link interactively.
+- Paste a YouTube playlist link to download the complete playlist.
 - Use `720p` automatically unless the session default is changed.
 - Type `q` to choose a persistent video quality or audio bitrate.
+- Type `a` to choose how many download attempts are made per format.
+- Type `d` to display complete in-app documentation and every shortcut.
 - Apply the selected video or audio preference to every later URL and batch file in the session.
+- Apply the selected attempt count to every later URL and batch file in the session.
 - Use the nearest available video quality or audio bitrate when an exact match is unavailable.
+- Show the current video's audio formats when none is reasonably near the saved audio bitrate.
+- Save that actual audio choice for the remaining URLs and batch entries in the session.
 - Download directly with a link and quality, for example `ytd youtube.com/watch?v=VIDEO_ID 720`.
 - Download many videos from a text file with `ytd @filename`.
+- Continue remaining playlist items when one item is unavailable or fails.
+- Print a final playlist summary table.
 - Type `e`, `exit`, or `quit` to close the CLI.
 - Continue downloading more videos in one CLI session.
 - Show download progress with percentage, speed, and ETA when available.
 - Show an animated connection status before download progress starts.
-- Retry a failed format twice, then automatically try another available format.
+- Retry a failed format using the active attempt count, then automatically try another available format.
 - Detect YouTube anti-bot verification and offer signed-in browser cookie authentication.
 - Print a final summary with link, video title, quality, saved file, and directory.
 - Save videos in the directory where the command prompt is open by default.
@@ -44,6 +52,9 @@ video_downloader/
     downloads.py      Download, retry, and FFmpeg operations
     download_service.py Single-download workflow coordination
     preferences.py     Persistent video/audio quality preferences
+    attempts.py        Persistent retry-attempt selection
+    documentation.py   Complete in-app command documentation
+    playlists.py       Playlist detection, entry URLs, and summary output
     batch.py          Batch-file processing and summary output
     console.py        Spinner, progress, and console helpers
     runtime.py        Dependency setup and runtime imports
@@ -54,7 +65,7 @@ video_downloader/
   .gitignore          Files and folders Git should ignore
   .ytd_env/           Auto-created local dependency folder, ignored by Git
   README.md           Project documentation
-  tests/              Unit tests for preferences and CLI behavior
+  tests/              Unit tests for CLI, downloads, playlists, and helpers
 ```
 
 ## Requirements
@@ -143,7 +154,8 @@ The CLI starts with a `720p` session default and shows:
 
 ```text
 Current default: Video 720p
-Enter URL, file, q to change quality, or e to exit:
+Current attempts: 2
+Enter URL, file, q quality, a attempts, d docs, or e exit:
 ```
 
 The first prompt accepts:
@@ -152,10 +164,31 @@ The first prompt accepts:
 url
 file
 q
+a
+d
 e
 ```
 
-Use `url` to download one video. Use `file` to choose a text file containing many YouTube links. Use `q` to change the session-wide video or audio preference. Use `e` to exit.
+Use `url` to download one video. Use `file` to choose a text file containing many YouTube links. Use `q` to change the session-wide video or audio preference. Use `a` to change the session-wide attempt count. Use `d` to show complete documentation. Use `e` to exit.
+
+## Shortcut Reference
+
+Every interactive shortcut is:
+
+| Shortcut | Meaning |
+|---|---|
+| Paste a URL | Download that URL immediately |
+| `url`, `u` | Ask for one YouTube URL |
+| `file`, `f` | List files and select a batch text file |
+| `@filename` | Use the named batch text file |
+| `q` | Change persistent video quality or audio bitrate |
+| `a` | Change persistent attempts per format |
+| `d` | Display complete in-app documentation |
+| `e` | Exit or cancel the current prompt |
+| `exit` | Exit the CLI |
+| `quit` | Exit the CLI |
+
+Run `ytd d` to show the documentation at startup and continue interactively. The `d` shortcut also works at the main prompt and YouTube-link prompt. After documentation is displayed, the current quality and attempt settings remain unchanged.
 
 You can also paste a YouTube link directly:
 
@@ -193,7 +226,64 @@ Selecting a video quality downloads video for all subsequent links. Selecting an
 
 The preference describes the target quality. Since YouTube formats differ by video, the downloader resolves it separately for each link. If the exact height or bitrate is missing, it uses the nearest available option. Audio files keep the available extension, such as `.m4a` or `.webm`.
 
+For audio, a format within 32 kbps of the saved target is considered near and is selected automatically. If every available audio format is farther away, the CLI shows the actual formats for that video:
+
+```text
+No audio format is near 320 kbps for this video.
+Available audio formats:
+1. webm (opus, 160 kbps)
+2. m4a (mp4a.40.2, 128 kbps)
+Choose an audio format number, or e to use the nearest format:
+```
+
+After a format is selected, its bitrate becomes the session audio target. The current download and all remaining single or batch downloads use that target until it is changed again.
+
+To change retry attempts, enter `a`, then enter a positive whole number such as `5`. The downloader will try each selected format up to five times for all later URLs and batch entries until the value is changed again.
+
 After the download finishes, the CLI asks for another link. Type `e` to exit.
+
+## Playlist Usage
+
+Paste a YouTube playlist URL anywhere a normal URL is accepted:
+
+```text
+https://www.youtube.com/playlist?list=PLAYLIST_ID
+```
+
+A video URL containing a playlist also downloads the complete playlist:
+
+```text
+https://www.youtube.com/watch?v=VIDEO_ID&list=PLAYLIST_ID
+```
+
+Direct command:
+
+```powershell
+ytd "https://www.youtube.com/playlist?list=PLAYLIST_ID"
+```
+
+The downloader:
+
+1. Detects playlist metadata automatically.
+2. Reads every playlist entry in order.
+3. Converts each entry into a clean single-video URL.
+4. Applies the current video quality or audio bitrate to every item.
+5. Applies the current attempt count to every item and format fallback.
+6. Reuses the existing authentication, FFmpeg, progress, nearest-quality, and distant-audio behavior.
+7. Records unavailable or failed entries and continues with the rest.
+8. Prints a final playlist summary table.
+
+If audio mode is active and an entry has no reasonably near bitrate, the actual audio list is shown. The selected replacement bitrate is then used for the remaining playlist entries.
+
+Example summary:
+
+```text
+Playlist Summary: My Playlist
+# | Status     | Quality | Video        | Saved File / Message
+1 | downloaded | 720p    | First video  | D:\Videos\First video [id].mp4
+2 | failed     | 720p    | Private video| This playlist entry is unavailable.
+Downloaded: 1 | Failed: 1 | Cancelled: 0 | Total: 2
+```
 
 ## Batch File Usage
 
@@ -252,7 +342,7 @@ ytd
 Then enter:
 
 ```text
-Enter URL, file, q to change quality, or e to exit: file
+Enter URL, file, q quality, a attempts, d docs, or e exit: file
 ```
 
 The CLI lists files in the current directory:
@@ -319,6 +409,12 @@ Download many videos from a text file:
 ytd --file links.txt
 ```
 
+Download a complete playlist:
+
+```powershell
+ytd "https://www.youtube.com/playlist?list=PLAYLIST_ID"
+```
+
 Command Prompt also supports:
 
 ```powershell
@@ -329,6 +425,18 @@ PowerShell supports the `@filename` form when quoted:
 
 ```powershell
 ytd '@links.txt'
+```
+
+Show complete in-app documentation:
+
+```powershell
+ytd d
+```
+
+Show concise argparse option help:
+
+```powershell
+ytd --help
 ```
 
 The script automatically changes this:
@@ -401,7 +509,7 @@ exit
 quit
 ```
 
-These work at the main prompt and link prompt. The `q` command is reserved for changing the active quality.
+These work at the main prompt and link prompt. Other reserved shortcuts are `q` for quality, `a` for attempts, and `d` for documentation.
 
 ## How It Works
 
@@ -409,17 +517,20 @@ The program flow is:
 
 1. Parse command line arguments.
 2. Start with a persistent `720p` session preference.
-3. Ask whether the user wants `url`, `file`, `q`, or `e`.
+3. Ask whether the user wants `url`, `file`, `q`, `a`, `d`, or `e`.
 4. When `q` is entered, save the selected video height or audio bitrate for the rest of the session.
-5. For single video mode, normalize the YouTube link.
-6. For file mode, read YouTube links from the selected text file.
-7. Fetch video metadata using `yt-dlp`.
-8. Read available video and audio-only formats from the metadata.
-9. Resolve the session preference to the nearest available format for that link.
-10. Download video or audio according to the active preference.
-11. Use FFmpeg to merge video and audio into an MP4 file when separate video streams are used.
-12. Print the download summary.
-13. Repeat with the same preference until the user changes it or exits.
+5. When `a` is entered, save the attempt count for the rest of the session.
+6. When `d` is entered, print complete documentation without changing session settings.
+7. Normalize the pasted YouTube link.
+8. For file mode, read YouTube links from the selected text file.
+9. Fetch metadata using `yt-dlp`.
+10. If metadata is a playlist, process every entry in order.
+11. Read available video and audio-only formats for each video.
+12. Resolve the session preference to the nearest available format for that link.
+13. Download video or audio using the active quality and attempt settings.
+14. Use FFmpeg to merge video and audio into an MP4 file when separate video streams are used.
+15. Print a single, batch, or playlist summary.
+16. Repeat with the same settings until the user changes them or exits.
 
 ## Code Methodology
 
@@ -524,6 +635,8 @@ If direct quality is provided, for example `720`, the script saves `720p` as the
 
 `nearest_video_quality()` and `nearest_audio_format()` choose the closest available height or bitrate for each link. If two options are equally close, the lower one is preferred.
 
+An audio difference of up to 32 kbps is accepted automatically. For a larger difference, `choose_available_audio_format()` displays the video's actual audio streams and updates the shared session preference with the user's selection.
+
 ### Download Method
 
 The `download_video()` function performs the actual download.
@@ -564,7 +677,7 @@ It reads the selected file line by line:
 - Valid YouTube links are normalized.
 - Invalid lines are added to the final table as failed rows.
 
-Each valid link is downloaded separately using the active session preference. The default is `720p`, but a video or audio choice made with `q` applies to the entire batch. If one download fails, the error is saved in the result table and the next link starts.
+Each valid link is downloaded separately using the active session preference. The default is `720p`, but a video or audio choice made with `q` applies to the entire batch. If an audio target is not reasonably available, the user chooses from the first affected video's actual formats and that new target is used for the remaining batch links. If one download fails, the error is saved in the result table and the next link starts.
 
 This keeps long batch downloads running even when one link is unavailable, private, removed, or typed incorrectly.
 
@@ -593,33 +706,37 @@ The `make_progress_hook()` function receives progress updates from `yt-dlp`.
 Before progress data is available, an animated status shows that the downloader is connecting to the media server. It then displays:
 
 - Download percentage
+- Total file size when reported or estimated by `yt-dlp`
+- Actual bytes downloaded so far
 - Speed
 - ETA
 
 Example:
 
 ```text
-Downloading 42.8% at 2.14MiB/s ETA 00:20
+Downloading 42.8% | Total 86.35MiB / Downloaded 36.96MiB | Speed 2.14MiB/s | ETA 00:20
 ```
+
+If the media server does not provide enough information to determine total or downloaded size, the unavailable value is omitted.
 
 ### Automatic Retry And Format Fallback
 
-Every selected video quality or audio format is attempted up to two times.
+Every selected video quality or audio format uses the active session attempt count. The default is two attempts. Enter `a` at the main or link prompt to change it.
 
 The CLI reports each stage:
 
 ```text
-Video 720p - attempt 1/2
+Video 720p - attempt 1/5
 | Connecting to media server for 720p
 Attempt 1 failed: The media server timed out while sending data.
 Retrying automatically...
-Video 720p - attempt 2/2
+Video 720p - attempt 2/5
 ```
 
-If both video attempts fail, the downloader tries the next available quality in nearest-first order. When two alternatives are equally close, the lower quality is tried first.
+If all attempts for a video format fail, the downloader tries the next available quality in nearest-first order. When two alternatives are equally close, the lower quality is tried first.
 
 ```text
-Both attempts failed for video 720p.
+All attempts failed for video 720p.
 Trying another video quality: 480p
 ```
 
@@ -680,14 +797,15 @@ After each successful download:
 
 1. It clears the current link or file.
 2. It keeps the active video or audio preference.
-3. It asks for `url`, `file`, `q`, or `e`.
+3. It asks for `url`, `file`, `q`, `a`, `d`, or `e`.
 4. It exits only when the user types `e`, `exit`, or `quit`.
 
 ## Example Session
 
 ```text
 Current default: Video 720p
-Enter URL, file, q to change quality, or e to exit: youtube.com/watch?v=s5WrmvC8oZ8
+Current attempts: 2
+Enter URL, file, q quality, a attempts, d docs, or e exit: youtube.com/watch?v=s5WrmvC8oZ8
 Downloading 100.0%
 Download finished. Processing media...
 
@@ -698,7 +816,7 @@ Quality: 720p
 Saved file: F:\Videos\Deep Sea Robots... [s5WrmvC8oZ8].mp4
 Your video downloaded at this: F:\Videos
 
-Enter URL, file, q to change quality, or e to exit: e
+Enter URL, file, q quality, a attempts, d docs, or e exit: e
 Exited.
 ```
 

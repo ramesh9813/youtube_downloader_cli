@@ -4,7 +4,7 @@ from pathlib import Path
 
 EXIT_COMMANDS = {"e", "exit", "quit"}
 DEFAULT_VIDEO_QUALITY = 720
-DOWNLOAD_ATTEMPTS = 2
+DEFAULT_DOWNLOAD_ATTEMPTS = 2
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 LOCAL_DEPS_DIR = Path(
     os.environ.get("YTD_DEPS_DIR", PROJECT_DIR / ".ytd_env" / "site-packages")

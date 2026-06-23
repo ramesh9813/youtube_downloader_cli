@@ -14,6 +14,7 @@ VIDEO_QUALITY_OPTIONS = (
     144,
 )
 AUDIO_BITRATE_OPTIONS = (320, 256, 192, 160, 128, 96, 64)
+AUDIO_NEAR_TOLERANCE_KBPS = 32
 
 
 def video_preference(quality):
@@ -28,6 +29,53 @@ def preference_label(preference):
     if preference["type"] == "audio":
         return f"Audio near {preference['bitrate']} kbps"
     return f"Video {preference['quality']}p"
+
+
+def is_audio_format_near(audio_format, requested_bitrate):
+    bitrate = audio_format.get("abr") or 0
+    return bool(bitrate) and (
+        abs(bitrate - requested_bitrate)
+        <= AUDIO_NEAR_TOLERANCE_KBPS
+    )
+
+
+def choose_available_audio_format(audio_formats, preference):
+    print(
+        f"\nNo audio format is near {preference['bitrate']} kbps "
+        "for this video."
+    )
+    print("Available audio formats:")
+    for index, audio_format in enumerate(audio_formats, start=1):
+        bitrate = (
+            f", {audio_format['abr']:.0f} kbps"
+            if audio_format.get("abr")
+            else ""
+        )
+        print(
+            f"{index}. {audio_format['ext']} "
+            f"({audio_format['acodec']}{bitrate})"
+        )
+
+    while True:
+        selected = read_input(
+            "Choose an audio format number, or e to use the nearest format: "
+        )
+        if is_exit_command(selected):
+            return None
+        if selected.isdigit():
+            index = int(selected)
+            if 1 <= index <= len(audio_formats):
+                audio_format = audio_formats[index - 1]
+                bitrate = audio_format.get("abr")
+                if bitrate:
+                    preference["bitrate"] = round(bitrate)
+                    print(
+                        f"Audio default changed to near "
+                        f"{preference['bitrate']} kbps for the rest of "
+                        "this session."
+                    )
+                return audio_format
+        print("Enter a valid number from the list.")
 
 
 def choose_session_preference(current):

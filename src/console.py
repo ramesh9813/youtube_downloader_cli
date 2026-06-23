@@ -74,6 +74,39 @@ def friendly_download_error(exc):
     return short_text(message, 180)
 
 
+def format_file_size(size_bytes):
+    if not size_bytes:
+        return ""
+    units = ("B", "KiB", "MiB", "GiB", "TiB")
+    size = float(size_bytes)
+    unit = units[0]
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
+            break
+        size /= 1024
+    if unit == "B":
+        return f"{size:.0f}{unit}"
+    return f"{size:.2f}{unit}"
+
+
+def progress_total_size(status):
+    formatted = (status.get("_total_bytes_str") or "").strip()
+    if formatted and formatted.lower() not in {"unknown", "n/a"}:
+        return formatted
+    total_bytes = (
+        status.get("total_bytes")
+        or status.get("total_bytes_estimate")
+    )
+    return format_file_size(total_bytes)
+
+
+def progress_downloaded_size(status):
+    formatted = (status.get("_downloaded_bytes_str") or "").strip()
+    if formatted and formatted.lower() not in {"unknown", "n/a"}:
+        return formatted
+    return format_file_size(status.get("downloaded_bytes"))
+
+
 def make_progress_hook(activity=None):
     last_line_len = 0
 
@@ -85,11 +118,20 @@ def make_progress_hook(activity=None):
             percent = status.get("_percent_str", "").strip()
             speed = status.get("_speed_str", "").strip()
             eta = status.get("_eta_str", "").strip()
+            total_size = progress_total_size(status)
+            downloaded_size = progress_downloaded_size(status)
             text = f"Downloading {percent}"
+            if total_size or downloaded_size:
+                size_parts = []
+                if total_size:
+                    size_parts.append(f"Total {total_size}")
+                if downloaded_size:
+                    size_parts.append(f"Downloaded {downloaded_size}")
+                text += " | " + " / ".join(size_parts)
             if speed:
-                text += f" at {speed}"
+                text += f" | Speed {speed}"
             if eta:
-                text += f" ETA {eta}"
+                text += f" | ETA {eta}"
             padding = " " * max(0, last_line_len - len(text))
             print(f"\r{text}{padding}", end="", flush=True)
             last_line_len = len(text)
@@ -97,4 +139,3 @@ def make_progress_hook(activity=None):
             print("\rDownload finished. Processing media..." + " " * 20)
 
     return hook
-

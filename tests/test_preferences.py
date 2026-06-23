@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from src.formats import (
     audio_fallback_order,
@@ -8,6 +9,8 @@ from src.formats import (
 )
 from src.preferences import (
     audio_preference,
+    choose_available_audio_format,
+    is_audio_format_near,
     preference_label,
     video_preference,
 )
@@ -77,6 +80,43 @@ class PreferenceTests(unittest.TestCase):
             ],
             ["128", "160", "64", "256"],
         )
+
+    def test_audio_within_32_kbps_is_near(self):
+        self.assertTrue(
+            is_audio_format_near({"abr": 160}, 128)
+        )
+        self.assertFalse(
+            is_audio_format_near({"abr": 160}, 320)
+        )
+
+    @patch("src.preferences.read_input", return_value="2")
+    def test_available_audio_choice_updates_session_preference(
+        self,
+        read_input,
+    ):
+        formats = [
+            {
+                "format_id": "160",
+                "ext": "webm",
+                "acodec": "opus",
+                "abr": 160,
+            },
+            {
+                "format_id": "96",
+                "ext": "m4a",
+                "acodec": "mp4a",
+                "abr": 96,
+            },
+        ]
+        preference = audio_preference(320)
+
+        selected = choose_available_audio_format(
+            formats,
+            preference,
+        )
+
+        self.assertEqual(selected["format_id"], "96")
+        self.assertEqual(preference, audio_preference(96))
 
 
 if __name__ == "__main__":

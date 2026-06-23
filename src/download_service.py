@@ -14,7 +14,16 @@ from .formats import (
     video_fallback_order,
 )
 from .metadata import fetch_info
-from .preferences import preference_label
+from .playlists import (
+    is_playlist_info,
+    list_playlist_entries,
+    print_playlist_summary,
+)
+from .preferences import (
+    choose_available_audio_format,
+    is_audio_format_near,
+    preference_label,
+)
 
 
 def download_one_result(
@@ -22,7 +31,9 @@ def download_one_result(
     preference,
     output_dir,
     authentication,
+    attempts,
     show_summary=True,
+    allow_playlist=True,
 ):
     if not link:
         print("No link provided.")
@@ -37,6 +48,15 @@ def download_one_result(
 
     try:
         info = fetch_info(link, authentication)
+        if allow_playlist and is_playlist_info(info):
+            return download_playlist_result(
+                link,
+                info,
+                preference,
+                output_dir,
+                authentication,
+                attempts,
+            )
         qualities = list_qualities(info)
         audio_formats = list_audio_formats(info)
         if preference["type"] == "audio":
@@ -48,6 +68,16 @@ def download_one_result(
                 raise RuntimeError(
                     "No downloadable audio format was found."
                 )
+            if not is_audio_format_near(
+                selected_format,
+                preference["bitrate"],
+            ):
+                chosen_format = choose_available_audio_format(
+                    audio_formats,
+                    preference,
+                )
+                if chosen_format is not None:
+                    selected_format = chosen_format
             selected_bitrate = selected_format.get("abr") or 0
             if selected_bitrate != preference["bitrate"]:
                 print(
@@ -64,6 +94,7 @@ def download_one_result(
                 audio_formats,
                 output_dir,
                 authentication,
+                attempts,
             )
             format_label = (
                 f"Audio {audio_format_label(selected_format)}"
@@ -95,6 +126,7 @@ def download_one_result(
                 qualities,
                 output_dir,
                 authentication,
+                attempts,
             )
             format_label = f"{selected_quality}p"
             media_name = "Video name"
@@ -137,12 +169,98 @@ def download_one_result(
         }
 
 
+def download_playlist_result(
+    link,
+    info,
+    preference,
+    output_dir,
+    authentication,
+    attempts,
+):
+    title = info.get("title") or "YouTube Playlist"
+    entries = list_playlist_entries(info)
+    if not entries:
+        raise RuntimeError("No downloadable videos were found in the playlist.")
+
+    print(f"\nPlaylist: {title}")
+    print(f"Videos found: {len(entries)}")
+    print(
+        f"Using {preference_label(preference)} with "
+        f"{attempts} attempt(s) per format."
+    )
+
+    results = []
+    for index, entry in enumerate(entries, start=1):
+        print(
+            f"\n[Playlist {index}/{len(entries)}] "
+            f"{entry['title']}"
+        )
+        if entry["error"]:
+            print(f"Skipped: {entry['error']}")
+            results.append(
+                {
+                    "status": "failed",
+                    "link": entry["link"],
+                    "quality": preference_label(preference),
+                    "title": entry["title"],
+                    "saved_path": "",
+                    "message": entry["error"],
+                }
+            )
+            continue
+
+        result = download_one_result(
+            entry["link"],
+            preference,
+            output_dir,
+            authentication,
+            attempts,
+            show_summary=False,
+            allow_playlist=False,
+        )
+        if not result.get("title"):
+            result["title"] = entry["title"]
+        results.append(result)
+        if result["status"] == "cancelled":
+            break
+
+    print_playlist_summary(title, results)
+    downloaded = sum(
+        result.get("status") == "downloaded" for result in results
+    )
+    failed = sum(
+        result.get("status") == "failed" for result in results
+    )
+    cancelled = any(
+        result.get("status") == "cancelled" for result in results
+    )
+    if cancelled:
+        status = "cancelled"
+    elif downloaded:
+        status = "downloaded"
+    else:
+        status = "failed"
+
+    return {
+        "status": status,
+        "link": link,
+        "quality": preference_label(preference),
+        "title": title,
+        "saved_path": "",
+        "message": (
+            f"Playlist downloaded: {downloaded}; failed: {failed}; "
+            f"total processed: {len(results)}."
+        ),
+    }
+
+
 def download_selected_audio(
     link,
     selected_format,
     audio_formats,
     output_dir,
     authentication,
+    attempts,
 ):
     candidates = audio_fallback_order(audio_formats, selected_format)
     for index, audio_format in enumerate(candidates):
@@ -157,13 +275,14 @@ def download_selected_audio(
                     authentication,
                 ),
                 authentication,
+                attempts,
             )
             return result, saved_path, audio_format
         except Exception:
             if index + 1 >= len(candidates):
                 raise
             next_label = audio_format_label(candidates[index + 1])
-            print(f"Both attempts failed for {label}.")
+            print(f"All {attempts} attempts failed for {label}.")
             print(f"Trying another audio format: {next_label}")
 
 
@@ -173,6 +292,7 @@ def download_selected_video(
     qualities,
     output_dir,
     authentication,
+    attempts,
 ):
     candidates = video_fallback_order(qualities, selected_quality)
     for index, quality in enumerate(candidates):
@@ -186,13 +306,16 @@ def download_selected_video(
                     authentication,
                 ),
                 authentication,
+                attempts,
             )
             return result, saved_path, quality
         except Exception:
             if index + 1 >= len(candidates):
                 raise
             next_quality = candidates[index + 1]
-            print(f"Both attempts failed for video {quality}p.")
+            print(
+                f"All {attempts} attempts failed for video {quality}p."
+            )
             print(f"Trying another video quality: {next_quality}p")
 
 

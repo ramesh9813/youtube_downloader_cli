@@ -10,7 +10,6 @@ from .authentication import (
     mark_browser_failed,
     prompt_for_authentication,
 )
-from .config import DOWNLOAD_ATTEMPTS
 from .console import (
     QuietDownloadLogger,
     Spinner,
@@ -23,10 +22,15 @@ from .formats import (
 from .runtime import ensure_dependencies, import_yt_dlp
 
 
-def download_with_retries(label, download_action, authentication):
+def download_with_retries(
+    label,
+    download_action,
+    authentication,
+    attempts,
+):
     last_error = None
-    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
-        print(f"\n{label} - attempt {attempt}/{DOWNLOAD_ATTEMPTS}")
+    for attempt in range(1, attempts + 1):
+        print(f"\n{label} - attempt {attempt}/{attempts}")
         while True:
             try:
                 return download_action()
@@ -98,7 +102,7 @@ def download_with_retries(label, download_action, authentication):
                     f"Attempt {attempt} failed: "
                     f"{friendly_download_error(exc)}"
                 )
-                if attempt < DOWNLOAD_ATTEMPTS:
+                if attempt < attempts:
                     print("Retrying automatically...")
                 break
 
@@ -207,5 +211,4 @@ def download_audio(link, audio_format, output_dir, authentication):
             return result, Path(ydl.prepare_filename(result))
     finally:
         activity.stop()
-
 

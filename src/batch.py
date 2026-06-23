@@ -161,6 +161,7 @@ def download_batch(
     output_dir,
     authentication,
     preference,
+    attempts,
 ):
     batch_path = resolve_batch_file(batch_file, Path.cwd())
     if batch_path is None:
@@ -174,7 +175,7 @@ def download_batch(
     print(f"\nBatch file: {batch_path}")
     print(
         f"Downloading {len(links)} item(s) as "
-        f"{preference_label(preference)}."
+        f"{preference_label(preference)} with {attempts} attempt(s)."
     )
 
     results = []
@@ -202,6 +203,7 @@ def download_batch(
             preference,
             output_dir,
             authentication,
+            attempts,
             show_summary=False,
         )
         if result["status"] == "cancelled":

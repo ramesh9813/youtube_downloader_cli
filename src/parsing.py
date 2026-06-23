@@ -65,6 +65,11 @@ def parse_args(argv):
     parser = argparse.ArgumentParser(
         prog="ytd",
         description="Download a YouTube video by quality.",
+        epilog=(
+            "Interactive shortcuts: URL, url/u, file/f, @file, "
+            "q=quality, a=attempts, d=documentation, "
+            "e/exit/quit=exit."
+        ),
     )
     parser.add_argument(
         "positional",
@@ -96,6 +101,8 @@ def parse_args(argv):
     )
     args = parser.parse_args(cleaned)
     args.change_quality = False
+    args.change_attempts = False
+    args.show_documentation = False
 
     skip_next = False
     for index, item in enumerate(args.positional):
@@ -121,6 +128,10 @@ def parse_args(argv):
             skip_next = True
         elif lowered == "q":
             args.change_quality = True
+        elif lowered == "a":
+            args.change_attempts = True
+        elif lowered == "d":
+            args.show_documentation = True
         if is_batch_reference(item):
             args.batch_file = normalize_batch_filename(item)
         elif is_probable_url(item):
