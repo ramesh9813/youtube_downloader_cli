@@ -14,10 +14,13 @@ The downloader uses:
 
 - Run `ytd` from the terminal.
 - Paste a YouTube link interactively.
-- Choose a video quality or an available audio-only format from a numbered list.
+- Use `720p` automatically unless the session default is changed.
+- Type `q` to choose a persistent video quality or audio bitrate.
+- Apply the selected video or audio preference to every later URL and batch file in the session.
+- Use the nearest available video quality or audio bitrate when an exact match is unavailable.
 - Download directly with a link and quality, for example `ytd youtube.com/watch?v=VIDEO_ID 720`.
 - Download many videos from a text file with `ytd @filename`.
-- Type `e`, `exit`, `q`, or `quit` to close the CLI.
+- Type `e`, `exit`, or `quit` to close the CLI.
 - Continue downloading more videos in one CLI session.
 - Show download progress with percentage, speed, and ETA when available.
 - Show an animated connection status before download progress starts.
@@ -40,6 +43,7 @@ video_downloader/
     formats.py        Video/audio format selection
     downloads.py      Download, retry, and FFmpeg operations
     download_service.py Single-download workflow coordination
+    preferences.py     Persistent video/audio quality preferences
     batch.py          Batch-file processing and summary output
     console.py        Spinner, progress, and console helpers
     runtime.py        Dependency setup and runtime imports
@@ -50,6 +54,7 @@ video_downloader/
   .gitignore          Files and folders Git should ignore
   .ytd_env/           Auto-created local dependency folder, ignored by Git
   README.md           Project documentation
+  tests/              Unit tests for preferences and CLI behavior
 ```
 
 ## Requirements
@@ -134,10 +139,11 @@ Interactive mode:
 
 If you installed the global command with `python -m pip install -e .`, you can use `ytd` instead.
 
-The CLI shows:
+The CLI starts with a `720p` session default and shows:
 
 ```text
-Enter url, file, e for exit:
+Current default: Video 720p
+Enter URL, file, q to change quality, or e to exit:
 ```
 
 The first prompt accepts:
@@ -145,37 +151,47 @@ The first prompt accepts:
 ```text
 url
 file
+q
 e
 ```
 
-Use `url` to download one video. Use `file` to choose a text file containing many YouTube links. Use `e` to exit.
+Use `url` to download one video. Use `file` to choose a text file containing many YouTube links. Use `q` to change the session-wide video or audio preference. Use `e` to exit.
 
-Paste a YouTube link:
+You can also paste a YouTube link directly:
 
 ```text
 youtube.com/watch?v=VIDEO_ID
 ```
 
-Then choose a video quality or audio-only format from the numbered list:
+The first download uses `720p` automatically. The same preference remains active for every later URL and batch file.
+
+To change it, enter `q`:
 
 ```text
-Available video qualities:
-1. 1080p (mp4, webm)
-2. 720p (mp4, webm)
-3. 480p (mp4)
-Available audio formats:
-4. Audio m4a (mp4a.40.2, 129 kbps)
-5. Audio webm (opus, 128 kbps)
-Choose video or audio number, or e to exit:
+Current default: Video 720p
+Video quality:
+1. 4320p
+2. 2160p
+3. 1440p
+4. 1080p
+5. 720p
+6. 480p
+7. 360p
+8. 240p
+9. 144p
+Audio quality:
+10. Audio near 320 kbps
+11. Audio near 256 kbps
+12. Audio near 192 kbps
+13. Audio near 160 kbps
+14. Audio near 128 kbps
+15. Audio near 96 kbps
+16. Audio near 64 kbps
 ```
 
-Enter a video number such as `2`, or an audio number such as `4`.
+Selecting a video quality downloads video for all subsequent links. Selecting an audio bitrate downloads audio-only files for all subsequent links, including every entry in a batch file.
 
-```text
-4
-```
-
-Audio choices are the audio-only streams actually available for that YouTube link. The downloaded file keeps the listed format, such as `.m4a` or `.webm`.
+The preference describes the target quality. Since YouTube formats differ by video, the downloader resolves it separately for each link. If the exact height or bitrate is missing, it uses the nearest available option. Audio files keep the available extension, such as `.m4a` or `.webm`.
 
 After the download finishes, the CLI asks for another link. Type `e` to exit.
 
@@ -225,7 +241,7 @@ ytd '@links.txt'
 
 PowerShell treats bare `@` as special syntax, so `ytd --file links.txt` is the safest command on Windows.
 
-These commands download each video at `720p` by default and save the files in the current command prompt directory.
+These commands download each video at `720p` by default and save the files in the current command prompt directory. In an interactive session, a preference selected with `q` applies to the complete batch. If audio is selected, every valid batch entry downloads as an audio-only file.
 
 You can also list files in the current directory and select one. Start the CLI:
 
@@ -236,7 +252,7 @@ ytd
 Then enter:
 
 ```text
-Enter url, file, e for exit: file
+Enter URL, file, q to change quality, or e to exit: file
 ```
 
 The CLI lists files in the current directory:
@@ -382,33 +398,28 @@ You can exit by typing any of these:
 ```text
 e
 exit
-q
 quit
 ```
 
-These work when the CLI asks for:
-
-- A YouTube link
-- A quality number
+These work at the main prompt and link prompt. The `q` command is reserved for changing the active quality.
 
 ## How It Works
 
 The program flow is:
 
 1. Parse command line arguments.
-2. Ask whether the user wants `url`, `file`, or `e`.
-3. For single video mode, normalize the YouTube link.
-4. For file mode, read YouTube links from the selected text file.
-5. Fetch video metadata using `yt-dlp`.
-6. Read available video and audio-only formats from the metadata.
-7. Group video formats by height and audio formats by extension and codec.
-8. Ask the user to select a video quality or audio format for single video mode, unless video quality was already provided.
-9. Use `720p` automatically for batch file mode.
-10. Select the best video and audio streams for the requested quality.
-11. Download the media.
-12. Use FFmpeg to merge video and audio into an MP4 file when separate streams are used.
-13. Print the download summary.
-14. Ask for another action until the user exits.
+2. Start with a persistent `720p` session preference.
+3. Ask whether the user wants `url`, `file`, `q`, or `e`.
+4. When `q` is entered, save the selected video height or audio bitrate for the rest of the session.
+5. For single video mode, normalize the YouTube link.
+6. For file mode, read YouTube links from the selected text file.
+7. Fetch video metadata using `yt-dlp`.
+8. Read available video and audio-only formats from the metadata.
+9. Resolve the session preference to the nearest available format for that link.
+10. Download video or audio according to the active preference.
+11. Use FFmpeg to merge video and audio into an MP4 file when separate video streams are used.
+12. Print the download summary.
+13. Repeat with the same preference until the user changes it or exits.
 
 ## Code Methodology
 
@@ -507,11 +518,11 @@ Audio m4a (mp4a.40.2, 129 kbps)
 Audio webm (opus, 128 kbps)
 ```
 
-Selecting an audio choice downloads only that stream and preserves its available extension. It does not download or merge the video stream.
+Selecting an audio preference downloads only an audio stream and preserves its available extension. It does not download or merge the video stream.
 
-If direct quality is provided, for example `720`, the script tries to use exact `720p`.
+If direct quality is provided, for example `720`, the script saves `720p` as the initial session preference.
 
-If exact quality is not available, `best_quality_at_or_below()` chooses the closest lower quality. If no lower quality exists, it chooses the lowest available quality.
+`nearest_video_quality()` and `nearest_audio_format()` choose the closest available height or bitrate for each link. If two options are equally close, the lower one is preferred.
 
 ### Download Method
 
@@ -553,7 +564,7 @@ It reads the selected file line by line:
 - Valid YouTube links are normalized.
 - Invalid lines are added to the final table as failed rows.
 
-Each valid link is downloaded separately at `720p` by default. If one download fails, the error is saved in the result table and the next link starts.
+Each valid link is downloaded separately using the active session preference. The default is `720p`, but a video or audio choice made with `q` applies to the entire batch. If one download fails, the error is saved in the result table and the next link starts.
 
 This keeps long batch downloads running even when one link is unavailable, private, removed, or typed incorrectly.
 
@@ -605,7 +616,7 @@ Retrying automatically...
 Video 720p - attempt 2/2
 ```
 
-If both video attempts fail, the downloader tries the next available quality. Lower qualities are tried first because they usually require less bandwidth. If no lower quality remains, it tries another available higher quality.
+If both video attempts fail, the downloader tries the next available quality in nearest-first order. When two alternatives are equally close, the lower quality is tried first.
 
 ```text
 Both attempts failed for video 720p.
@@ -667,23 +678,16 @@ The `main()` function runs a loop.
 
 After each successful download:
 
-1. It clears the current link, file, and quality.
-2. It asks for `url`, `file`, or `e`.
-3. It exits only when the user types `e`, `exit`, `q`, or `quit`.
+1. It clears the current link or file.
+2. It keeps the active video or audio preference.
+3. It asks for `url`, `file`, `q`, or `e`.
+4. It exits only when the user types `e`, `exit`, or `quit`.
 
 ## Example Session
 
 ```text
-Enter url, file, e for exit: url
-Enter YouTube link, or e to exit: youtube.com/watch?v=s5WrmvC8oZ8
-Available qualities:
-1. 1080p (webm)
-2. 720p (mp4, webm)
-3. 480p (mp4)
-Available audio formats:
-4. Audio m4a (mp4a.40.2, 129 kbps)
-5. Audio webm (opus, 128 kbps)
-Choose video or audio number, or e to exit: 2
+Current default: Video 720p
+Enter URL, file, q to change quality, or e to exit: youtube.com/watch?v=s5WrmvC8oZ8
 Downloading 100.0%
 Download finished. Processing media...
 
@@ -694,7 +698,7 @@ Quality: 720p
 Saved file: F:\Videos\Deep Sea Robots... [s5WrmvC8oZ8].mp4
 Your video downloaded at this: F:\Videos
 
-Enter url, file, e for exit: e
+Enter URL, file, q to change quality, or e to exit: e
 Exited.
 ```
 

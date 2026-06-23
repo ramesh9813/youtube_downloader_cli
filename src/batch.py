@@ -9,6 +9,7 @@ from .parsing import (
     normalize_batch_filename,
     normalize_link,
 )
+from .preferences import preference_label
 
 
 def list_files_for_selection(directory):
@@ -159,7 +160,7 @@ def download_batch(
     batch_file,
     output_dir,
     authentication,
-    quality,
+    preference,
 ):
     batch_path = resolve_batch_file(batch_file, Path.cwd())
     if batch_path is None:
@@ -171,7 +172,10 @@ def download_batch(
         return True
 
     print(f"\nBatch file: {batch_path}")
-    print(f"Downloading {len(links)} item(s) at {quality}p.")
+    print(
+        f"Downloading {len(links)} item(s) as "
+        f"{preference_label(preference)}."
+    )
 
     results = []
     for index, item in enumerate(links, start=1):
@@ -183,7 +187,7 @@ def download_batch(
                 {
                     "status": "failed",
                     "link": link,
-                    "quality": f"{quality}p",
+                    "quality": preference_label(preference),
                     "title": "",
                     "saved_path": "",
                     "message": (
@@ -195,10 +199,9 @@ def download_batch(
 
         result = download_one_result(
             link,
-            quality,
+            preference,
             output_dir,
             authentication,
-            allow_quality_prompt=False,
             show_summary=False,
         )
         if result["status"] == "cancelled":

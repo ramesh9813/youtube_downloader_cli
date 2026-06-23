@@ -1,7 +1,3 @@
-from .console import read_input
-from .parsing import is_exit_command
-
-
 def list_qualities(info):
     choices = {}
     for fmt in info.get("formats", []):
@@ -57,70 +53,37 @@ def list_audio_formats(info):
     )
 
 
-def choose_format(qualities, audio_formats):
-    if not qualities:
-        raise RuntimeError(
-            "No downloadable video qualities were found for this link."
-        )
-
-    choices = []
-    print("Available video qualities:")
-    for index, item in enumerate(qualities, start=1):
-        extensions = ", ".join(sorted(item["exts"]))
-        print(f"{index}. {item['height']}p ({extensions})")
-        choices.append({"type": "video", "quality": item["height"]})
-
-    if audio_formats:
-        print("Available audio formats:")
-        for item in audio_formats:
-            index = len(choices) + 1
-            bitrate = f", {item['abr']:.0f} kbps" if item["abr"] else ""
-            print(
-                f"{index}. Audio {item['ext']} "
-                f"({item['acodec']}{bitrate})"
-            )
-            choices.append(item)
-
-    while True:
-        selected = read_input(
-            "Choose video or audio number, or e to exit: "
-        )
-        if is_exit_command(selected):
-            return None
-        if selected.isdigit():
-            index = int(selected)
-            if 1 <= index <= len(choices):
-                choice = choices[index - 1]
-                if choice["type"] == "video":
-                    print(
-                        f"Selected video quality: {choice['quality']}p"
-                    )
-                else:
-                    print(
-                        f"Selected audio format: "
-                        f"{audio_format_label(choice)}"
-                    )
-                return choice
-        print("Enter a valid number from the list.")
-
-
-def best_quality_at_or_below(qualities, requested):
+def nearest_video_quality(qualities, requested):
     if not requested:
         return None
-    exact = [
-        item["height"]
-        for item in qualities
-        if item["height"] == requested
+    available = [item["height"] for item in qualities]
+    if not available:
+        return None
+    return min(
+        available,
+        key=lambda height: (
+            abs(height - requested),
+            height > requested,
+            height,
+        ),
+    )
+
+
+def nearest_audio_format(audio_formats, requested_bitrate):
+    if not audio_formats:
+        return None
+    with_bitrate = [
+        item for item in audio_formats if item.get("abr")
     ]
-    if exact:
-        return exact[0]
-    lower = [
-        item["height"]
-        for item in qualities
-        if item["height"] <= requested
-    ]
-    return max(lower) if lower else min(
-        item["height"] for item in qualities
+    if not with_bitrate:
+        return audio_formats[0]
+    return min(
+        with_bitrate,
+        key=lambda item: (
+            abs(item["abr"] - requested_bitrate),
+            item["abr"] > requested_bitrate,
+            item["abr"],
+        ),
     )
 
 
@@ -138,23 +101,25 @@ def audio_format_label(audio_format):
 
 def video_fallback_order(qualities, selected_quality):
     available = [item["height"] for item in qualities]
-    lower = sorted(
-        (height for height in available if height < selected_quality),
-        reverse=True,
+    return sorted(
+        available,
+        key=lambda height: (
+            height != selected_quality,
+            abs(height - selected_quality),
+            height > selected_quality,
+            height,
+        ),
     )
-    higher = sorted(
-        height for height in available if height > selected_quality
-    )
-    return [selected_quality, *lower, *higher]
 
 
 def audio_fallback_order(audio_formats, selected_format):
-    return [
-        selected_format,
-        *[
-            item
-            for item in audio_formats
-            if item["format_id"] != selected_format["format_id"]
-        ],
-    ]
-
+    selected_bitrate = selected_format.get("abr") or 0
+    return sorted(
+        audio_formats,
+        key=lambda item: (
+            item["format_id"] != selected_format["format_id"],
+            abs((item.get("abr") or 0) - selected_bitrate),
+            (item.get("abr") or 0) > selected_bitrate,
+            item.get("abr") or 0,
+        ),
+    )

@@ -44,8 +44,17 @@ def normalize_batch_filename(value):
 
 def parse_args(argv):
     cleaned = []
+    expecting_quality_value = False
     for arg in argv:
         lowered = arg.lower().strip()
+        if expecting_quality_value:
+            cleaned.append(str(normalize_quality(arg) or arg))
+            expecting_quality_value = False
+            continue
+        if lowered in {"--quality", "-q"}:
+            cleaned.append(lowered)
+            expecting_quality_value = True
+            continue
         if lowered in {"---link--", "--link--", "---link", "link"}:
             cleaned.append("--link")
         elif re.fullmatch(r"-*\d+p?-*", lowered):
@@ -86,6 +95,7 @@ def parse_args(argv):
         help="Netscape-format cookies.txt file",
     )
     args = parser.parse_args(cleaned)
+    args.change_quality = False
 
     skip_next = False
     for index, item in enumerate(args.positional):
@@ -109,6 +119,8 @@ def parse_args(argv):
         elif lowered in {"url", "u"} and next_item:
             args.link = args.link or normalize_link(next_item)
             skip_next = True
+        elif lowered == "q":
+            args.change_quality = True
         if is_batch_reference(item):
             args.batch_file = normalize_batch_filename(item)
         elif is_probable_url(item):
@@ -120,4 +132,3 @@ def parse_args(argv):
         args.link = normalize_link(args.link)
     args.quality = normalize_quality(args.quality)
     return args
-

@@ -7,21 +7,21 @@ from .downloads import (
 from .formats import (
     audio_fallback_order,
     audio_format_label,
-    best_quality_at_or_below,
-    choose_format,
     list_audio_formats,
     list_qualities,
+    nearest_audio_format,
+    nearest_video_quality,
     video_fallback_order,
 )
 from .metadata import fetch_info
+from .preferences import preference_label
 
 
 def download_one_result(
     link,
-    requested_quality,
+    preference,
     output_dir,
     authentication,
-    allow_quality_prompt=True,
     show_summary=True,
 ):
     if not link:
@@ -39,36 +39,21 @@ def download_one_result(
         info = fetch_info(link, authentication)
         qualities = list_qualities(info)
         audio_formats = list_audio_formats(info)
-        selected_quality = best_quality_at_or_below(
-            qualities,
-            requested_quality,
-        )
-        selected_format = None
-
-        if not selected_quality:
-            if not allow_quality_prompt:
-                raise RuntimeError(
-                    "No downloadable video quality was found."
-                )
-            selected_format = choose_format(qualities, audio_formats)
-            if selected_format is None:
-                return {
-                    "status": "cancelled",
-                    "link": link,
-                    "quality": "",
-                    "title": "",
-                    "saved_path": "",
-                    "message": "Cancelled.",
-                }
-            if selected_format["type"] == "video":
-                selected_quality = selected_format["quality"]
-        elif requested_quality and selected_quality != requested_quality:
-            print(
-                f"Requested {requested_quality}p is not available. "
-                f"Using {selected_quality}p instead."
+        if preference["type"] == "audio":
+            selected_format = nearest_audio_format(
+                audio_formats,
+                preference["bitrate"],
             )
-
-        if selected_format and selected_format["type"] == "audio":
+            if selected_format is None:
+                raise RuntimeError(
+                    "No downloadable audio format was found."
+                )
+            selected_bitrate = selected_format.get("abr") or 0
+            if selected_bitrate != preference["bitrate"]:
+                print(
+                    f"Audio near {preference['bitrate']} kbps is not available. "
+                    f"Using {audio_format_label(selected_format)} instead."
+                )
             (
                 result,
                 saved_path,
@@ -81,13 +66,25 @@ def download_one_result(
                 authentication,
             )
             format_label = (
-                f"Audio {selected_format['ext']} "
-                f"({selected_format['acodec']})"
+                f"Audio {audio_format_label(selected_format)}"
             )
             media_name = "Audio name"
             format_name = "Audio format"
             location_name = "Your audio downloaded at this"
         else:
+            selected_quality = nearest_video_quality(
+                qualities,
+                preference["quality"],
+            )
+            if selected_quality is None:
+                raise RuntimeError(
+                    "No downloadable video quality was found."
+                )
+            if selected_quality != preference["quality"]:
+                print(
+                    f"Requested {preference['quality']}p is not available. "
+                    f"Using {selected_quality}p instead."
+                )
             (
                 result,
                 saved_path,
@@ -133,9 +130,7 @@ def download_one_result(
         return {
             "status": "failed",
             "link": link,
-            "quality": (
-                f"{requested_quality}p" if requested_quality else ""
-            ),
+            "quality": preference_label(preference),
             "title": "",
             "saved_path": "",
             "message": message,

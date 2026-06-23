@@ -2,8 +2,8 @@ import os
 from pathlib import Path
 
 
-EXIT_COMMANDS = {"e", "exit", "q", "quit"}
-BATCH_QUALITY = 720
+EXIT_COMMANDS = {"e", "exit", "quit"}
+DEFAULT_VIDEO_QUALITY = 720
 DOWNLOAD_ATTEMPTS = 2
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 LOCAL_DEPS_DIR = Path(
@@ -60,4 +60,3 @@ REQUIRED_PACKAGES = {
     "yt-dlp": "yt_dlp",
     "imageio-ffmpeg": "imageio_ffmpeg",
 }
-

@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 from .batch import download_batch
-from .config import BATCH_QUALITY
+from .config import DEFAULT_VIDEO_QUALITY
 from .console import read_input
 from .download_service import download_one_result
 from .parsing import (
@@ -13,12 +13,19 @@ from .parsing import (
     normalize_link,
     parse_args,
 )
+from .preferences import (
+    choose_session_preference,
+    preference_label,
+    video_preference,
+)
 
 
 def prompt_for_action():
-    value = read_input("Enter url, file, e for exit: ")
+    value = read_input("Enter URL, file, q to change quality, or e to exit: ")
     if is_exit_command(value):
         return "exit", None
+    if value.lower() == "q":
+        return "quality", None
     if value.lower() in {"url", "u"}:
         return "url", None
     if value.lower() in {"file", "f"}:
@@ -27,15 +34,22 @@ def prompt_for_action():
         return "file", normalize_batch_filename(value)
     if is_probable_url(value):
         return "url", normalize_link(value)
-    print("Enter url for one video, file for a text file list, or e to exit.")
+    print(
+        "Enter a URL, file for a text file list, q to change quality, "
+        "or e to exit."
+    )
     return None, None
 
 
 def prompt_for_link():
-    value = read_input("Enter YouTube link, or e to exit: ")
+    value = read_input(
+        "Enter YouTube link, q to change quality, or e to exit: "
+    )
     if is_exit_command(value):
-        return None
-    return normalize_link(value)
+        return "exit", None
+    if value.lower() == "q":
+        return "quality", None
+    return "url", normalize_link(value)
 
 
 def build_authentication(args):
@@ -58,11 +72,18 @@ def build_authentication(args):
 def main(argv=None):
     args = parse_args(argv if argv is not None else sys.argv[1:])
     link = args.link
-    requested_quality = args.quality
     batch_file = args.batch_file
+    preference = video_preference(
+        args.quality or DEFAULT_VIDEO_QUALITY
+    )
     authentication = build_authentication(args)
     if authentication is None:
         return 2
+
+    if args.change_quality:
+        preference = choose_session_preference(preference)
+
+    print(f"Current default: {preference_label(preference)}")
 
     while True:
         if batch_file is not None:
@@ -70,11 +91,10 @@ def main(argv=None):
                 batch_file,
                 args.output,
                 authentication,
-                requested_quality or BATCH_QUALITY,
+                preference,
             )
             batch_file = None
             link = None
-            requested_quality = None
             continue
 
         if not link:
@@ -84,19 +104,28 @@ def main(argv=None):
             if action == "exit":
                 print("Exited.")
                 return 0
+            if action == "quality":
+                preference = choose_session_preference(preference)
+                continue
             if action == "file":
                 batch_file = value
                 continue
 
-            link = value or prompt_for_link()
-            requested_quality = None
-            if link is None:
-                print("Exited.")
-                return 0
+            if value:
+                link = value
+            else:
+                link_action, link_value = prompt_for_link()
+                if link_action == "exit":
+                    print("Exited.")
+                    return 0
+                if link_action == "quality":
+                    preference = choose_session_preference(preference)
+                    continue
+                link = link_value
 
         result = download_one_result(
             link,
-            requested_quality,
+            preference,
             args.output,
             authentication,
         )
@@ -104,4 +133,3 @@ def main(argv=None):
             return 0
 
         link = None
-        requested_quality = None
