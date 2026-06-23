@@ -1,0 +1,2 @@
+"""YouTube downloader CLI implementation."""
+

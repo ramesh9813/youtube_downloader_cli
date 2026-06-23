@@ -14,3 +14,4 @@ ytd = "ytd:main"
 
 [tool.setuptools]
 py-modules = ["ytd"]
+packages = ["src"]

@@ -31,7 +31,19 @@ The downloader uses:
 
 ```text
 video_downloader/
-  ytd.py              Main Python CLI source code
+  ytd.py              Small compatibility entry point
+  src/
+    cli.py            Main command loop and user prompts
+    parsing.py        Command-line and link parsing
+    authentication.py Browser and cookie authentication
+    metadata.py       YouTube metadata retrieval
+    formats.py        Video/audio format selection
+    downloads.py      Download, retry, and FFmpeg operations
+    download_service.py Single-download workflow coordination
+    batch.py          Batch-file processing and summary output
+    console.py        Spinner, progress, and console helpers
+    runtime.py        Dependency setup and runtime imports
+    config.py         Shared constants and paths
   ytd.bat             Windows launcher for running .\ytd from this folder
   pyproject.toml      Package configuration and ytd command registration
   requirements.txt    Python dependencies
